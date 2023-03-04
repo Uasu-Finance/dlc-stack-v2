@@ -59,7 +59,10 @@ impl Storage for MemoryStorage {
             .collect())
     }
 
-    fn create_contract(&mut self, contract: &OfferedContract) -> Result<(), DaemonError> {
+    fn create_contract(
+        self: &MemoryStorage,
+        contract: &OfferedContract,
+    ) -> Result<(), DaemonError> {
         let mut map = self.contracts.write().expect("Could not get write lock");
         let uuid = get_contract_id_string(contract.id);
         info!("Create new contract with contract id {}", uuid.clone());
@@ -72,7 +75,7 @@ impl Storage for MemoryStorage {
         }
     }
 
-    fn delete_contract(&mut self, id: &ContractId) -> Result<(), DaemonError> {
+    fn delete_contract(self: &MemoryStorage, id: &ContractId) -> Result<(), DaemonError> {
         let mut map = self.contracts.write().expect("Could not get write lock");
         let uuid = get_contract_id_string(*id);
         info!("Delete contract with contract id {}", uuid.clone());
@@ -80,7 +83,7 @@ impl Storage for MemoryStorage {
         Ok(())
     }
 
-    fn update_contract(&mut self, contract: &Contract) -> Result<(), DaemonError> {
+    fn update_contract(self: &MemoryStorage, contract: &Contract) -> Result<(), DaemonError> {
         let mut map = self.contracts.write().expect("Could not get write lock");
         let contract_id: String = get_contract_id_string(contract.get_id());
         let curr_state = get_contract_state_str(contract);
@@ -153,5 +156,50 @@ impl Storage for MemoryStorage {
         }
 
         Ok(res)
+    }
+
+    fn upsert_channel(
+        &self,
+        _channel: dlc_manager::channel::Channel,
+        _contract: Option<Contract>,
+    ) -> Result<(), DaemonError> {
+        todo!()
+    }
+
+    fn delete_channel(&self, _channel_id: &dlc_manager::ChannelId) -> Result<(), DaemonError> {
+        todo!()
+    }
+
+    fn get_channel(
+        &self,
+        _channel_id: &dlc_manager::ChannelId,
+    ) -> Result<Option<dlc_manager::channel::Channel>, DaemonError> {
+        todo!()
+    }
+
+    fn get_signed_channels(
+        &self,
+        _channel_state: Option<dlc_manager::channel::signed_channel::SignedChannelStateType>,
+    ) -> Result<Vec<dlc_manager::channel::signed_channel::SignedChannel>, DaemonError> {
+        todo!()
+    }
+
+    fn get_offered_channels(
+        &self,
+    ) -> Result<Vec<dlc_manager::channel::offered_channel::OfferedChannel>, DaemonError> {
+        todo!()
+    }
+
+    fn persist_chain_monitor(
+        &self,
+        _monitor: &dlc_manager::chain_monitor::ChainMonitor,
+    ) -> Result<(), DaemonError> {
+        todo!()
+    }
+
+    fn get_chain_monitor(
+        &self,
+    ) -> Result<Option<dlc_manager::chain_monitor::ChainMonitor>, DaemonError> {
+        todo!()
     }
 }

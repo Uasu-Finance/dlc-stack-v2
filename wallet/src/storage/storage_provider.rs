@@ -8,7 +8,7 @@ use dlc_manager::contract::{Contract, PreClosedContract};
 use dlc_manager::error::Error;
 use dlc_manager::{ContractId, Storage};
 use dlc_sled_storage_provider::SledStorageProvider;
-use log::info;
+use log::{debug, info};
 use std::env;
 
 pub struct StorageProvider {
@@ -92,12 +92,12 @@ impl Storage for StorageProvider {
         }
     }
 
-    fn create_contract(&mut self, contract: &OfferedContract) -> Result<(), Error> {
+    fn create_contract(self: &StorageProvider, contract: &OfferedContract) -> Result<(), Error> {
         if self.storage_api.is_some() {
-            self.storage_api.as_mut().unwrap().create_contract(contract)
+            self.storage_api.as_ref().unwrap().create_contract(contract)
         } else if self.sled_storage.is_some() {
             self.sled_storage
-                .as_mut()
+                .as_ref()
                 .unwrap()
                 .create_contract(contract)
         } else {
@@ -105,22 +105,22 @@ impl Storage for StorageProvider {
         }
     }
 
-    fn delete_contract(&mut self, id: &ContractId) -> Result<(), Error> {
+    fn delete_contract(self: &StorageProvider, id: &ContractId) -> Result<(), Error> {
         if self.storage_api.is_some() {
-            self.storage_api.as_mut().unwrap().delete_contract(id)
+            self.storage_api.as_ref().unwrap().delete_contract(id)
         } else if self.sled_storage.is_some() {
-            self.sled_storage.as_mut().unwrap().delete_contract(id)
+            self.sled_storage.as_ref().unwrap().delete_contract(id)
         } else {
             self.memory_storage.delete_contract(id)
         }
     }
 
-    fn update_contract(&mut self, contract: &Contract) -> Result<(), Error> {
+    fn update_contract(self: &StorageProvider, contract: &Contract) -> Result<(), Error> {
         if self.storage_api.is_some() {
-            self.storage_api.as_mut().unwrap().update_contract(contract)
+            self.storage_api.as_ref().unwrap().update_contract(contract)
         } else if self.sled_storage.is_some() {
             self.sled_storage
-                .as_mut()
+                .as_ref()
                 .unwrap()
                 .update_contract(contract)
         } else {
@@ -172,5 +172,49 @@ impl Storage for StorageProvider {
         } else {
             self.memory_storage.get_preclosed_contracts()
         }
+    }
+
+    fn upsert_channel(
+        &self,
+        _channel: dlc_manager::channel::Channel,
+        _contract: Option<Contract>,
+    ) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn delete_channel(&self, _channel_id: &dlc_manager::ChannelId) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn get_channel(
+        &self,
+        _channel_id: &dlc_manager::ChannelId,
+    ) -> Result<Option<dlc_manager::channel::Channel>, Error> {
+        todo!()
+    }
+
+    fn get_signed_channels(
+        &self,
+        _channel_state: Option<dlc_manager::channel::signed_channel::SignedChannelStateType>,
+    ) -> Result<Vec<dlc_manager::channel::signed_channel::SignedChannel>, Error> {
+        debug!("'get_signed_channels' Not Yet Implemented");
+        return Ok(vec![]);
+    }
+
+    fn get_offered_channels(
+        &self,
+    ) -> Result<Vec<dlc_manager::channel::offered_channel::OfferedChannel>, Error> {
+        todo!()
+    }
+
+    fn persist_chain_monitor(
+        &self,
+        _monitor: &dlc_manager::chain_monitor::ChainMonitor,
+    ) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn get_chain_monitor(&self) -> Result<Option<dlc_manager::chain_monitor::ChainMonitor>, Error> {
+        todo!()
     }
 }

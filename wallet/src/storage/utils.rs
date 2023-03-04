@@ -8,6 +8,8 @@ use dlc_manager::contract::ser::Serializable;
 use dlc_manager::contract::{ClosedContract, FailedAcceptContract, FailedSignContract};
 use std::fmt::Write as _;
 
+use log::{debug, info, warn};
+
 pub fn to_storage_error<T>(e: T) -> Error
 where
     T: std::fmt::Display,
@@ -66,20 +68,22 @@ convertible_enum!(
         Closed,
         FailedAccept,
         FailedSign,
-        Refunded,;
+        Refunded,
+        Rejected,;
     },
     Contract
 );
 
 pub fn serialize_contract(contract: &Contract) -> Result<Vec<u8>, ::std::io::Error> {
     let serialized = match contract {
-        Contract::Offered(o) => o.serialize(),
-        Contract::Accepted(o) => o.serialize(),
-        Contract::Signed(o) | Contract::Confirmed(o) | Contract::Refunded(o) => o.serialize(),
+        Contract::Offered(c) => c.serialize(),
+        Contract::Accepted(c) => c.serialize(),
+        Contract::Signed(c) | Contract::Confirmed(c) | Contract::Refunded(c) => c.serialize(),
         Contract::FailedAccept(c) => c.serialize(),
         Contract::FailedSign(c) => c.serialize(),
         Contract::PreClosed(c) => c.serialize(),
         Contract::Closed(c) => c.serialize(),
+        Contract::Rejected(c) => c.serialize(),
     };
     let mut serialized = serialized?;
     let mut res = Vec::with_capacity(serialized.len() + 1);
@@ -121,6 +125,9 @@ pub fn deserialize_contract(buff: &Vec<u8>) -> Result<Contract, Error> {
         ContractPrefix::Refunded => {
             Contract::Refunded(SignedContract::deserialize(&mut cursor).map_err(to_storage_error)?)
         }
+        ContractPrefix::Rejected => {
+            Contract::Rejected(OfferedContract::deserialize(&mut cursor).map_err(to_storage_error)?)
+        }
     };
     Ok(contract)
 }
@@ -136,6 +143,7 @@ pub fn get_contract_state_str(contract: &Contract) -> String {
         Contract::Refunded(_) => "refunded",
         Contract::FailedAccept(_) => "failed_accept",
         Contract::FailedSign(_) => "failed_sign",
+        Contract::Rejected(_) => "rejected",
     };
     return state.to_string();
 }

@@ -209,20 +209,29 @@ fn check_close(
     let mut collected_response = json!({});
     let mut man = manager.lock().unwrap();
 
-    man.periodic_check().unwrap();
+    match man.periodic_check() {
+        Ok(_) => (),
+        Err(e) => {
+            info!("Error in periodic_check, will retry: {}", e.to_string());
+            return Response::empty_400();
+        }
+    };
 
     let store = man.get_store();
 
     collected_response["signed_contracts"] = store
         .get_signed_contracts()
-        .unwrap()
+        .unwrap_or(vec![])
         .iter()
         .map(|c| {
             let confirmations = match wallet
                 .get_transaction_confirmations(&c.accepted_contract.dlc_transactions.fund.txid())
             {
                 Ok(confirms) => confirms,
-                Err(_) => 0,
+                Err(e) => {
+                    info!("Error checking confirmations: {}", e.to_string());
+                    0
+                }
             };
             if confirmations >= NUM_CONFIRMATIONS {
                 let uuid = c.accepted_contract.offered_contract.contract_info[0]
@@ -234,31 +243,33 @@ fn check_close(
                     let mut post_body = HashMap::new();
                     post_body.insert("uuid", &uuid);
 
-                    let client = match reqwest::blocking::Client::builder()
+                    let client = reqwest::blocking::Client::builder()
                         .use_rustls_tls()
-                        .build()
-                    {
-                        Ok(c) => c,
-                        Err(_) => panic!("Unable to create a new reqwest client"),
-                    };
-                    let res = client.post(&funded_url).json(&post_body).send();
+                        .build();
+                    if client.is_ok() {
+                        let res = client.unwrap().post(&funded_url).json(&post_body).send();
 
-                    match res {
-                        Ok(res) => match res.error_for_status() {
-                            Ok(_res) => {
-                                funded_uuids.push(uuid.clone());
-                                info!(
-                                    "Success setting funded to true: {}, {}",
-                                    uuid,
-                                    _res.status()
-                                );
-                            }
+                        match res {
+                            Ok(res) => match res.error_for_status() {
+                                Ok(_res) => {
+                                    funded_uuids.push(uuid.clone());
+                                    info!(
+                                        "Success setting funded to true: {}, {}",
+                                        uuid,
+                                        _res.status()
+                                    );
+                                }
+                                Err(e) => {
+                                    info!(
+                                        "Error setting funded to true: {}: {}",
+                                        uuid,
+                                        e.to_string()
+                                    );
+                                }
+                            },
                             Err(e) => {
                                 info!("Error setting funded to true: {}: {}", uuid, e.to_string());
                             }
-                        },
-                        Err(e) => {
-                            info!("Error setting funded to true: {}: {}", uuid, e.to_string());
                         }
                     }
                 }
@@ -269,20 +280,20 @@ fn check_close(
 
     collected_response["confirmed_contracts"] = store
         .get_confirmed_contracts()
-        .unwrap()
+        .unwrap_or(vec![])
         .iter()
         .map(|c| c.accepted_contract.get_contract_id_string())
         .collect();
 
     collected_response["preclosed_contracts"] = store
         .get_preclosed_contracts()
-        .unwrap()
+        .unwrap_or(vec![])
         .iter()
         .map(|c| c.signed_contract.accepted_contract.get_contract_id_string())
         .collect();
 
     let mut closed_contracts: Vec<String> = Vec::new();
-    for val in store.get_contracts().unwrap().iter() {
+    for val in store.get_contracts().unwrap_or(vec![]).iter() {
         if let Contract::Closed(c) = val {
             let mut string_id = String::with_capacity(32 * 2 + 2);
             string_id.push_str("0x");
