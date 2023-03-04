@@ -22,7 +22,7 @@ use dlc_manager::{
         Contract,
     },
     manager::Manager,
-    Oracle, Storage, SystemTimeProvider, Wallet,
+    Blockchain, Oracle, Storage, SystemTimeProvider,
 };
 use dlc_messages::{AcceptDlc, Message};
 use log::{debug, info, warn};
@@ -32,6 +32,7 @@ use oracle_client::P2PDOracleClient;
 use rouille::Response;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::fmt::Write as _;
 use utils::get_numerical_contract_info;
 
 mod oracle_client;
@@ -46,6 +47,7 @@ type DlcManager<'a> = Manager<
     Box<StorageProvider>,
     Arc<P2PDOracleClient>,
     Arc<SystemTimeProvider>,
+    Arc<BitcoinCoreProvider>,
 >;
 
 const NUM_CONFIRMATIONS: u32 = 2;
@@ -88,24 +90,28 @@ fn main() {
 
     let auth = Auth::UserPass(rpc_user, rpc_pass);
     let rpc = Client::new(&format!("http://{}", btc_rpc_url), auth.clone()).unwrap();
-    let bitcoin_core = Arc::new(BitcoinCoreProvider { client: rpc });
+    let bitcoin_core = Arc::new(BitcoinCoreProvider::new_from_rpc_client(rpc));
     let p2p_client: P2PDOracleClient = retry!(
         P2PDOracleClient::new(&oracle_url),
         10,
         "oracle client creation"
     );
     let oracle = Arc::new(p2p_client);
-    let oracles: HashMap<secp256k1_zkp::schnorrsig::PublicKey, Arc<P2PDOracleClient>> =
+    let oracles: HashMap<bitcoincore_rpc::bitcoin::XOnlyPublicKey, _> =
         HashMap::from([(oracle.get_public_key(), oracle.clone())]);
     let store = StorageProvider::new();
     let time_provider = SystemTimeProvider {};
-    let manager = Arc::new(Mutex::new(Manager::new(
-        Arc::clone(&bitcoin_core),
-        Arc::clone(&bitcoin_core),
-        Box::new(store),
-        oracles,
-        Arc::new(time_provider),
-    )));
+    let manager = Arc::new(Mutex::new(
+        Manager::new(
+            Arc::clone(&bitcoin_core),
+            Arc::clone(&bitcoin_core),
+            Box::new(store),
+            oracles,
+            Arc::new(time_provider),
+            Arc::clone(&bitcoin_core),
+        )
+        .unwrap(),
+    ));
 
     let man2 = manager.clone();
     info!("periodic_check loop thread starting");
@@ -278,7 +284,12 @@ fn check_close(
     let mut closed_contracts: Vec<String> = Vec::new();
     for val in store.get_contracts().unwrap().iter() {
         if let Contract::Closed(c) = val {
-            closed_contracts.push(c.signed_contract.accepted_contract.get_contract_id_string());
+            let mut string_id = String::with_capacity(32 * 2 + 2);
+            string_id.push_str("0x");
+            for i in &c.contract_id {
+                write!(string_id, "{:02x}", i).unwrap();
+            }
+            closed_contracts.push(string_id);
         }
     }
     collected_response["closed_contracts"] = closed_contracts.into();
@@ -297,26 +308,12 @@ fn create_new_offer(
 ) -> Response {
     let (_event_descriptor, descriptor) =
         get_numerical_contract_info(accept_collateral, offer_collateral, total_outcomes);
-    let announcement_res = oracle.get_announcement(&event_id);
     info!(
         "Creating new offer with event id: {}, accept collateral: {}, offer_collateral: {}",
         event_id.clone(),
         accept_collateral,
         offer_collateral
     );
-    let maturity = match announcement_res {
-        Ok(a) => a.oracle_event.event_maturity_epoch,
-        Err(_e) => {
-            return Response::json(&ErrorsResponse {
-                status: 400,
-                errors: vec![ErrorResponse {
-                    message: "OracleEventNotFoundError".to_string(),
-                    code: None,
-                }],
-            })
-            .with_status_code(400)
-        }
-    };
 
     let contract_info = ContractInputInfo {
         oracles: OracleInput {
@@ -330,7 +327,6 @@ fn create_new_offer(
     let contract_input = ContractInput {
         offer_collateral: offer_collateral,
         accept_collateral: accept_collateral,
-        maturity_time: maturity as u32,
         fee_rate: 2,
         contract_infos: vec![contract_info],
     };
