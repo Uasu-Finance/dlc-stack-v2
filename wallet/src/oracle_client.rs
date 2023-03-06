@@ -72,30 +72,6 @@ struct AttestationResponse {
     values: Vec<String>,
 }
 
-// fn get<T>(path: &str) -> Result<T, DlcManagerError>
-// where
-//     T: serde::de::DeserializeOwned,
-// {
-//     reqwest::blocking::get(path)
-//         .map_err(|x| {
-//             dlc_manager::error::Error::IOError(std::io::Error::new(std::io::ErrorKind::Other, x))
-//         })?
-//         .json::<T>()
-//         .map_err(|e| dlc_manager::error::Error::OracleError(e.to_string()))
-// }
-
-// fn get_object<T>(path: &str) -> Result<T, DlcManagerError>
-// where
-//     T: serde::de::DeserializeOwned,
-// {
-//     reqwest::blocking::get(path)
-//         .map_err(|x| {
-//             dlc_manager::error::Error::IOError(std::io::Error::new(std::io::ErrorKind::Other, x))
-//         })?
-//         .json::<T>()
-//         .map_err(|e| dlc_manager::error::Error::OracleError(e.to_string()))
-// }
-
 fn get_object<T>(path: &str) -> Result<T, DlcManagerError>
 where
     T: serde::de::DeserializeOwned,
@@ -161,19 +137,6 @@ impl P2PDOracleClient {
         Ok(P2PDOracleClient { host, public_key })
     }
 }
-
-// fn parse_event_id(event_id: &str) -> Result<(String, DateTime<Utc>), DlcManagerError> {
-//     let asset_id = &event_id[..6];
-//     let timestamp_str = &event_id[6..];
-//     let timestamp: i64 = timestamp_str
-//         .parse()
-//         .map_err(|_| DlcManagerError::OracleError("Invalid timestamp format".to_string()))?;
-//     let naive_date_time = NaiveDateTime::from_timestamp_opt(timestamp, 0).ok_or_else(|| {
-//         DlcManagerError::InvalidParameters(format!("Invalid timestamp {} in event id", timestamp))
-//     })?;
-//     let date_time = DateTime::from_utc(naive_date_time, Utc);
-//     Ok((asset_id.to_string(), date_time))
-// }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodeHexError {
