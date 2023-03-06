@@ -8,8 +8,6 @@ use dlc_manager::contract::ser::Serializable;
 use dlc_manager::contract::{ClosedContract, FailedAcceptContract, FailedSignContract};
 use std::fmt::Write as _;
 
-use log::{debug, info, warn};
-
 pub fn to_storage_error<T>(e: T) -> Error
 where
     T: std::fmt::Display,
