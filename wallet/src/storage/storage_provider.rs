@@ -8,7 +8,7 @@ use dlc_manager::contract::{Contract, PreClosedContract};
 use dlc_manager::error::Error;
 use dlc_manager::{ContractId, Storage};
 use dlc_sled_storage_provider::SledStorageProvider;
-use log::{debug, info};
+use log::{info, trace};
 use std::env;
 
 pub struct StorageProvider {
@@ -197,7 +197,7 @@ impl Storage for StorageProvider {
         &self,
         _channel_state: Option<dlc_manager::channel::signed_channel::SignedChannelStateType>,
     ) -> Result<Vec<dlc_manager::channel::signed_channel::SignedChannel>, Error> {
-        debug!("'get_signed_channels' Not Yet Implemented");
+        trace!("'get_signed_channels' Not Yet Implemented");
         return Ok(vec![]);
     }
 
