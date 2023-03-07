@@ -14,18 +14,19 @@ use std::{
     vec,
 };
 
-use bitcoin_rpc_provider::BitcoinCoreProvider;
-use bitcoincore_rpc::{Auth, Client};
 use dlc_manager::{
     contract::{
         contract_input::{ContractInput, ContractInputInfo, OracleInput},
         Contract,
     },
     manager::Manager,
-    Blockchain, Oracle, Storage, SystemTimeProvider,
+    Blockchain, Oracle, Storage, SystemTimeProvider, Wallet,
 };
 use dlc_messages::{AcceptDlc, Message};
+use dlc_sled_storage_provider::SledStorageProvider;
+use electrs_blockchain_provider::ElectrsBlockchainProvider;
 use log::{debug, info, warn};
+use simple_wallet::SimpleWallet;
 
 use crate::storage::storage_provider::StorageProvider;
 use oracle_client::P2PDOracleClient;
@@ -42,12 +43,12 @@ mod utils;
 mod macros;
 
 type DlcManager<'a> = Manager<
-    Arc<BitcoinCoreProvider>,
-    Arc<BitcoinCoreProvider>,
+    Arc<SimpleWallet<Arc<ElectrsBlockchainProvider>, Arc<SledStorageProvider>>>,
+    Arc<ElectrsBlockchainProvider>,
     Box<StorageProvider>,
     Arc<P2PDOracleClient>,
     Arc<SystemTimeProvider>,
-    Arc<BitcoinCoreProvider>,
+    Arc<ElectrsBlockchainProvider>,
 >;
 
 const NUM_CONFIRMATIONS: u32 = 2;
@@ -77,51 +78,68 @@ fn main() {
     // let url = "http://54.147.153.106:18443/"; - devnet
 
     let oracle_url: String = env::var("ORACLE_URL").unwrap_or("http://localhost:8080".to_string());
-    let rpc_user: String = env::var("RPC_USER").unwrap_or("testuser".to_string());
-    let rpc_pass: String =
-        env::var("RPC_PASS").unwrap_or("lq6zequb-gYTdF2_ZEUtr8ywTXzLYtknzWU4nV8uVoo=".to_string());
-    let btc_rpc_url: String =
-        env::var("BTC_RPC_URL").unwrap_or("localhost:18443/wallet/alice".to_string());
+    // let rpc_user: String = env::var("RPC_USER").unwrap_or("testuser".to_string());
+    // let rpc_pass: String =
+    //     env::var("RPC_PASS").unwrap_or("lq6zequb-gYTdF2_ZEUtr8ywTXzLYtknzWU4nV8uVoo=".to_string());
+    // let btc_rpc_url: String =
+    //     env::var("BTC_RPC_URL").unwrap_or("localhost:18443/wallet/alice".to_string());
     let funded_url: String = env::var("FUNDED_URL")
         .unwrap_or("https://stacks-observer-mocknet.herokuapp.com/funded".to_string());
     let wallet_backend_port: String = env::var("WALLET_BACKEND_PORT").unwrap_or("8085".to_string());
 
     let mut funded_uuids: Vec<String> = vec![];
 
-    let auth = Auth::UserPass(rpc_user, rpc_pass);
-    let rpc = Client::new(&format!("http://{}", btc_rpc_url), auth.clone()).unwrap();
-    let bitcoin_core = Arc::new(BitcoinCoreProvider::new_from_rpc_client(rpc));
+    // let auth = Auth::UserPass(rpc_user, rpc_pass);
+    // let rpc = Client::new(&format!("http://{}", btc_rpc_url), auth.clone()).unwrap();
+    // let bitcoin_core = Arc::new(BitcoinCoreProvider::new_from_rpc_client(rpc));
+    let electrs = Arc::new(ElectrsBlockchainProvider::new(
+        "https://dev-oracle.dlc.link/electrs/".to_string(),
+        bitcoin::Network::Regtest,
+    ));
+    // let store = StorageProvider::new();
+    let store = StorageProvider::new();
+    let sled_path: String = env::var("SLED_PATH").unwrap_or("wallet_db".to_string());
+    let wallet_store = Arc::new(SledStorageProvider::new(sled_path.as_str()).unwrap());
+    let wallet = Arc::new(SimpleWallet::new(
+        electrs.clone(),
+        wallet_store.clone(),
+        bitcoin::Network::Regtest,
+    ));
     let p2p_client: P2PDOracleClient = retry!(
         P2PDOracleClient::new(&oracle_url),
         10,
         "oracle client creation"
     );
     let oracle = Arc::new(p2p_client);
-    let oracles: HashMap<bitcoincore_rpc::bitcoin::XOnlyPublicKey, _> =
+    let oracles: HashMap<bitcoin::XOnlyPublicKey, _> =
         HashMap::from([(oracle.get_public_key(), oracle.clone())]);
-    let store = StorageProvider::new();
     let time_provider = SystemTimeProvider {};
     let manager = Arc::new(Mutex::new(
         Manager::new(
-            Arc::clone(&bitcoin_core),
-            Arc::clone(&bitcoin_core),
+            Arc::clone(&wallet),
+            Arc::clone(&electrs),
             Box::new(store),
             oracles,
             Arc::new(time_provider),
-            Arc::clone(&bitcoin_core),
+            Arc::clone(&electrs),
         )
         .unwrap(),
     ));
 
     let man2 = manager.clone();
     info!("periodic_check loop thread starting");
+    debug!("Wallet address: {:?}", wallet.get_new_address());
     thread::spawn(move || loop {
         check_close(
             man2.clone(),
-            bitcoin_core.clone(),
+            electrs.clone(),
             funded_url.clone(),
             &mut funded_uuids,
         );
+        debug!("Wallet balance: {}", wallet.get_balance());
+        wallet
+            .refresh()
+            .unwrap_or_else(|e| println!("Error refreshing wallet {e}"));
         thread::sleep(Duration::from_millis(10000));
     });
 
@@ -202,7 +220,7 @@ impl FromStr for OfferType {
 
 fn check_close(
     manager: Arc<Mutex<DlcManager>>,
-    wallet: Arc<BitcoinCoreProvider>,
+    blockchain: Arc<dyn Blockchain>,
     funded_url: String,
     funded_uuids: &mut Vec<String>,
 ) -> Response {
@@ -224,7 +242,7 @@ fn check_close(
         .unwrap_or(vec![])
         .iter()
         .map(|c| {
-            let confirmations = match wallet
+            let confirmations = match blockchain
                 .get_transaction_confirmations(&c.accepted_contract.dlc_transactions.fund.txid())
             {
                 Ok(confirms) => confirms,
