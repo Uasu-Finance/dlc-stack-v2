@@ -70,41 +70,65 @@ struct ErrorsResponse {
 
 fn main() {
     env_logger::init();
+    let oracle_url: String = env::var("ORACLE_URL").unwrap_or("http://localhost:8080".to_string());
+
+    let funded_url: String = env::var("FUNDED_URL")
+        .unwrap_or("https://stacks-observer-mocknet.herokuapp.com/funded".to_string());
+    let wallet_backend_port: String = env::var("WALLET_BACKEND_PORT").unwrap_or("8085".to_string());
+    let mut funded_uuids: Vec<String> = vec![];
+
+    // Setup Blockchain Connection Object
+
+    // RPC CONFIG
     // let auth = Auth::UserPass(
     //     "testuser".to_string(),
     //     "lq6zequb-gYTdF2_ZEUtr8ywTXzLYtknzWU4nV8uVoo=".to_string(),
     // );
     // let url = "http://localhost:18443/wallet/alice"; - localhost
     // let url = "http://54.147.153.106:18443/"; - devnet
-
-    let oracle_url: String = env::var("ORACLE_URL").unwrap_or("http://localhost:8080".to_string());
     // let rpc_user: String = env::var("RPC_USER").unwrap_or("testuser".to_string());
     // let rpc_pass: String =
     //     env::var("RPC_PASS").unwrap_or("lq6zequb-gYTdF2_ZEUtr8ywTXzLYtknzWU4nV8uVoo=".to_string());
     // let btc_rpc_url: String =
     //     env::var("BTC_RPC_URL").unwrap_or("localhost:18443/wallet/alice".to_string());
-    let funded_url: String = env::var("FUNDED_URL")
-        .unwrap_or("https://stacks-observer-mocknet.herokuapp.com/funded".to_string());
-    let wallet_backend_port: String = env::var("WALLET_BACKEND_PORT").unwrap_or("8085".to_string());
-
-    let mut funded_uuids: Vec<String> = vec![];
 
     // let auth = Auth::UserPass(rpc_user, rpc_pass);
     // let rpc = Client::new(&format!("http://{}", btc_rpc_url), auth.clone()).unwrap();
     // let bitcoin_core = Arc::new(BitcoinCoreProvider::new_from_rpc_client(rpc));
-    let electrs = Arc::new(ElectrsBlockchainProvider::new(
-        "https://dev-oracle.dlc.link/electrs/".to_string(),
-        bitcoin::Network::Regtest,
+
+    // ELECTRUM / ELECTRS
+    // // mocknet
+    // let electrs_host = "https://dev-oracle.dlc.link/electrs/";
+    // testnet
+    let electrs_host = "https://blockstream.info/testnet/api/";
+    // // mainnet
+    // let electrs_host = "https://blockstream.info/api/";
+    let blockchain = Arc::new(ElectrsBlockchainProvider::new(
+        electrs_host.to_string(),
+        bitcoin::Network::Testnet,
     ));
-    // let store = StorageProvider::new();
+
+    // Blockcypher
+    // let blockchain = Arc::new(BlockcypherBlockchainProvider::new(
+    //     "https://api.blockcypher.com".to_string(),
+    //     bitcoin::Network::Testnet,
+    // ));
+
+    // Set up DLC store
     let store = StorageProvider::new();
+
+    // Set up wallet store
     let sled_path: String = env::var("SLED_PATH").unwrap_or("wallet_db".to_string());
     let wallet_store = Arc::new(SledStorageProvider::new(sled_path.as_str()).unwrap());
+
+    // Set up wallet
     let wallet = Arc::new(SimpleWallet::new(
-        electrs.clone(),
+        blockchain.clone(),
         wallet_store.clone(),
-        bitcoin::Network::Regtest,
+        bitcoin::Network::Testnet,
     ));
+
+    // Set up Oracle Client
     let p2p_client: P2PDOracleClient = retry!(
         P2PDOracleClient::new(&oracle_url),
         10,
@@ -113,18 +137,24 @@ fn main() {
     let oracle = Arc::new(p2p_client);
     let oracles: HashMap<bitcoin::XOnlyPublicKey, _> =
         HashMap::from([(oracle.get_public_key(), oracle.clone())]);
+
+    // Set up time provider
     let time_provider = SystemTimeProvider {};
+
+    // Create the DLC Manager
     let manager = Arc::new(Mutex::new(
         Manager::new(
             Arc::clone(&wallet),
-            Arc::clone(&electrs),
+            Arc::clone(&blockchain),
             Box::new(store),
             oracles,
             Arc::new(time_provider),
-            Arc::clone(&electrs),
+            Arc::clone(&blockchain),
         )
         .unwrap(),
     ));
+
+    // Start periodic_check thread
 
     let man2 = manager.clone();
     info!("periodic_check loop thread starting");
@@ -132,7 +162,7 @@ fn main() {
     thread::spawn(move || loop {
         check_close(
             man2.clone(),
-            electrs.clone(),
+            blockchain.clone(),
             funded_url.clone(),
             &mut funded_uuids,
         );
