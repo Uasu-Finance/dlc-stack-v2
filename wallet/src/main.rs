@@ -52,7 +52,10 @@ type DlcManager<'a> = Manager<
 >;
 
 const NUM_CONFIRMATIONS: u32 = 2;
-const COUNTER_PARTY_PK: &str = "02fc8e97419286cf05e5d133f41ff6d51f691dda039e9dc007245a421e2c7ec61c";
+
+// The contracts in dlc-manager expect a node id, but web extensions often don't have this, so hardcode it for now. Should not have any ramifications.
+const STATIC_COUNTERPARTY_NODE_ID: &str =
+    "02fc8e97419286cf05e5d133f41ff6d51f691dda039e9dc007245a421e2c7ec61c";
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -362,11 +365,10 @@ fn create_new_offer(
         contract_infos: vec![contract_info],
     };
 
-    match &manager
-        .lock()
-        .unwrap()
-        .send_offer(&contract_input, COUNTER_PARTY_PK.parse().unwrap())
-    {
+    match &manager.lock().unwrap().send_offer(
+        &contract_input,
+        STATIC_COUNTERPARTY_NODE_ID.parse().unwrap(),
+    ) {
         Ok(dlc) => {
             debug!(
                 "Create new offer dlc output: {}",
@@ -391,7 +393,7 @@ fn create_new_offer(
 fn accept_offer(accept_dlc: AcceptDlc, manager: Arc<Mutex<DlcManager>>) -> Response {
     if let Some(Message::Sign(sign)) = match manager.lock().unwrap().on_dlc_message(
         &Message::Accept(accept_dlc),
-        COUNTER_PARTY_PK.parse().unwrap(),
+        STATIC_COUNTERPARTY_NODE_ID.parse().unwrap(),
     ) {
         Ok(dlc) => dlc,
         Err(e) => {
