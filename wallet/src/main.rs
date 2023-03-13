@@ -78,41 +78,13 @@ fn main() {
     let mut funded_uuids: Vec<String> = vec![];
 
     // Setup Blockchain Connection Object
-
-    // RPC CONFIG
-    // let auth = Auth::UserPass(
-    //     "testuser".to_string(),
-    //     "lq6zequb-gYTdF2_ZEUtr8ywTXzLYtknzWU4nV8uVoo=".to_string(),
-    // );
-    // let url = "http://localhost:18443/wallet/alice"; - localhost
-    // let url = "http://54.147.153.106:18443/"; - devnet
-    // let rpc_user: String = env::var("RPC_USER").unwrap_or("testuser".to_string());
-    // let rpc_pass: String =
-    //     env::var("RPC_PASS").unwrap_or("lq6zequb-gYTdF2_ZEUtr8ywTXzLYtknzWU4nV8uVoo=".to_string());
-    // let btc_rpc_url: String =
-    //     env::var("BTC_RPC_URL").unwrap_or("localhost:18443/wallet/alice".to_string());
-
-    // let auth = Auth::UserPass(rpc_user, rpc_pass);
-    // let rpc = Client::new(&format!("http://{}", btc_rpc_url), auth.clone()).unwrap();
-    // let bitcoin_core = Arc::new(BitcoinCoreProvider::new_from_rpc_client(rpc));
-
     // ELECTRUM / ELECTRS
-    // // mocknet
-    // let electrs_host = "https://dev-oracle.dlc.link/electrs/";
-    // testnet
-    let electrs_host = "https://blockstream.info/testnet/api/";
-    // // mainnet
-    // let electrs_host = "https://blockstream.info/api/";
+    let electrs_host =
+        env::var("ELECTRUM_API_URL").unwrap_or("https://blockstream.info/testnet/api/".to_string());
     let blockchain = Arc::new(ElectrsBlockchainProvider::new(
         electrs_host.to_string(),
         bitcoin::Network::Testnet,
     ));
-
-    // Blockcypher
-    // let blockchain = Arc::new(BlockcypherBlockchainProvider::new(
-    //     "https://api.blockcypher.com".to_string(),
-    //     bitcoin::Network::Testnet,
-    // ));
 
     // Set up DLC store
     let store = StorageProvider::new();
