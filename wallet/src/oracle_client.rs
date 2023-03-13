@@ -1,5 +1,5 @@
-// ! # cg-oracle-client
-// ! Http client wrapper for the Crypto Garage DLC oracle
+//! # cg-oracle-client
+//! Http client wrapper for the Crypto Garage DLC oracle
 
 // Coding conventions
 #![deny(non_upper_case_globals)]
@@ -17,64 +17,52 @@ extern crate reqwest;
 extern crate secp256k1_zkp;
 extern crate serde;
 
-use core::str;
-use serde_json::Value;
-use std::fmt;
-use std::num::ParseIntError;
+use std::{fmt, io::Cursor, num::ParseIntError, str::FromStr};
 
-use std::io::Cursor;
-use std::str::FromStr;
-
-// use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use dlc_manager::error::Error as DlcManagerError;
 use dlc_manager::Oracle;
 use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use log::info;
-
-use secp256k1_zkp::schnorrsig::PublicKey;
-use secp256k1_zkp::schnorrsig::Signature;
+use secp256k1_zkp::{schnorr::Signature, XOnlyPublicKey};
+use serde_json::Value;
 
 /// Enables interacting with a DLC oracle.
 pub struct P2PDOracleClient {
     host: String,
-    public_key: PublicKey,
-    // key_pair: KeyPair,
-    // secp: Secp256k1<All>,
-    // announcements: Mutex<HashMap<String, OracleAnnouncement>>,
-    // attestations: Mutex<HashMap<String, OracleAttestation>>,
-    // nonces: Mutex<HashMap<String, Vec<SecretKey>>>,
+    public_key: XOnlyPublicKey,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PublicKeyResponse {
-    public_key: PublicKey,
+    public_key: XOnlyPublicKey,
 }
 
-// #[derive(serde::Deserialize, serde::Serialize)]
-// #[serde(rename_all = "camelCase")]
-// struct EventDescriptor {
-//     base: u16,
-//     is_signed: bool,
-//     unit: String,
-//     precision: i32,
-// }
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventDescriptor {
+    base: u16,
+    is_signed: bool,
+    unit: String,
+    precision: i32,
+}
 
-// #[derive(serde::Deserialize, serde::Serialize)]
-// #[serde(rename_all = "camelCase")]
-// struct Event {
-//     nonces: Vec<PublicKey>,
-//     event_maturity: DateTime<Utc>,
-//     event_id: String,
-//     event_descriptor: EventDescriptor,
-// }
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Event {
+    nonces: Vec<XOnlyPublicKey>,
+    event_maturity: DateTime<Utc>,
+    event_id: String,
+    event_descriptor: EventDescriptor,
+}
 
-// #[derive(serde::Deserialize, serde::Serialize)]
-// #[serde(rename_all = "camelCase")]
-// struct AnnoucementResponse {
-//     oracle_public_key: PublicKey,
-//     oracle_event: Event,
-// }
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnnoucementResponse {
+    oracle_public_key: XOnlyPublicKey,
+    oracle_event: Event,
+}
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,18 +71,6 @@ struct AttestationResponse {
     signatures: Vec<Signature>,
     values: Vec<String>,
 }
-
-// fn get<T>(path: &str) -> Result<T, DlcManagerError>
-// where
-//     T: serde::de::DeserializeOwned,
-// {
-//     reqwest::blocking::get(path)
-//         .map_err(|x| {
-//             dlc_manager::error::Error::IOError(std::io::Error::new(std::io::ErrorKind::Other, x))
-//         })?
-//         .json::<T>()
-//         .map_err(|e| dlc_manager::error::Error::OracleError(e.to_string()))
-// }
 
 fn get_object<T>(path: &str) -> Result<T, DlcManagerError>
 where
@@ -119,16 +95,6 @@ fn get_json(path: &str) -> Result<Value, DlcManagerError> {
         })
 }
 
-/* deserialize the announcement object and should have it
-
-let mut announcement_cursor = Cursor::new(&event.1[6..]);
-    let decoded_announcement =
-        <dlc_messages::oracle_msgs::OracleAnnouncement as lightning::util::ser::Readable>::read(
-            &mut announcement_cursor,
-        )
-        .unwrap();
- */
-
 fn pubkey_path(host: &str) -> String {
     format!("{}{}", host, "v1/publickey")
 }
@@ -138,14 +104,8 @@ fn announcement_path(host: &str, event_id: &str) -> String {
 }
 
 fn attestation_path(host: &str, event_id: &str) -> String {
-    format!("{}v1/announcement/{}", host, event_id,)
+    format!("{}v1/announcement/{}", host, event_id)
 }
-
-// impl Default for P2PDOracleClient {
-//     fn default() -> Self {
-//         Self::new()
-//     }
-// }
 
 impl P2PDOracleClient {
     /// Try to create an instance of an oracle client connecting to the provided
@@ -171,7 +131,7 @@ impl P2PDOracleClient {
 
         info!("Oracle Pub Key: {}", public_key.to_string());
 
-        let public_key = PublicKey::from_str(&public_key)
+        let public_key = XOnlyPublicKey::from_str(&public_key)
             .map_err(|_| DlcManagerError::OracleError("Oracle PubKey Error".to_string()))?;
         info!("The p2pd oracle client has been created successfully");
         Ok(P2PDOracleClient { host, public_key })
@@ -213,7 +173,7 @@ pub fn decode_hex(s: &str) -> Result<Vec<u8>, DecodeHexError> {
 }
 
 impl Oracle for P2PDOracleClient {
-    fn get_public_key(&self) -> PublicKey {
+    fn get_public_key(&self) -> XOnlyPublicKey {
         self.public_key
     }
 
@@ -223,7 +183,16 @@ impl Oracle for P2PDOracleClient {
         info!("Getting announcement at URL {path}");
         let v = get_json(&path)?;
 
-        let encoded_hex_announcement = v["rust_announcement"].as_str().unwrap(); //call to_string instead of as_str and watch your world crumble to pieces
+        let encoded_hex_announcement = match v["rust_announcement"].as_str() {
+            //call to_string instead of as_str and watch your world crumble to pieces
+            None => {
+                return Err(DlcManagerError::OracleError(format!(
+                    "missing announcement for event {}",
+                    event_id,
+                )))
+            }
+            Some(s) => s,
+        };
 
         let buffer = decode_hex(&encoded_hex_announcement).unwrap();
 
@@ -237,7 +206,10 @@ impl Oracle for P2PDOracleClient {
         Ok(decoded_announcement)
     }
 
-    fn get_attestation(&self, event_id: &str) -> Result<OracleAttestation, DlcManagerError> {
+    fn get_attestation(
+        &self,
+        event_id: &str,
+    ) -> Result<OracleAttestation, dlc_manager::error::Error> {
         let path = attestation_path(&self.host, event_id);
         let v = get_json(&path)?;
 
@@ -271,32 +243,19 @@ mod tests {
     extern crate mockito;
     use self::mockito::{mock, Mock};
     use super::*;
-    /*
-        #[test]
-        fn parse_event_test() {
-            let event_id = "btcusd1624943400";
-            let expected_asset_id = "btcusd";
-            let expected_date_time = DateTime::parse_from_rfc3339("2021-06-29T05:10:00Z").unwrap();
 
-            let (asset_id, date_time) = parse_event_id(event_id).expect("Error parsing event id");
-
-            assert_eq!(expected_asset_id, asset_id);
-            assert_eq!(expected_date_time, date_time);
-        }
-    */
     fn pubkey_mock() -> Mock {
         let path: &str = &pubkey_path("/");
-        mock("GET", path).with_body(
-            r#"{"publicKey":"ce4b7ad2b45de01f0897aa716f67b4c2f596e54506431e693f898712fe7e9bf3"}"#,
-        ).create()
+        mock("GET", path)
+            .with_body(r#""ce4b7ad2b45de01f0897aa716f67b4c2f596e54506431e693f898712fe7e9bf3""#)
+            .create()
     }
 
     #[test]
-    #[should_panic] // TODO: investigate that format issue (panic) is expected or not
     fn get_public_key_test() {
         let url = &mockito::server_url();
-        let _m = pubkey_mock();
-        let expected_pk: PublicKey =
+        let _pubkey_mock = pubkey_mock();
+        let expected_pk: XOnlyPublicKey =
             "ce4b7ad2b45de01f0897aa716f67b4c2f596e54506431e693f898712fe7e9bf3"
                 .parse()
                 .unwrap();
@@ -307,33 +266,31 @@ mod tests {
     }
 
     #[test]
-    #[should_panic] // TODO: investigate that format issue (panic) is expected or not
     fn get_announcement_test() {
         let url = &mockito::server_url();
         let _pubkey_mock = pubkey_mock();
-        let path: &str = &announcement_path("/", "2021-06-29T05:10:00Z");
-        let _m = mock("GET", path).with_body(r#"{"announcementSignature":"f83db0ca25e4c209b55156737b0c65470a9702fe9d1d19a129994786384289397895e403ff37710095a04a0841a95738e3e8bc35bdef6bce50bf34eeb182bd9b","oraclePublicKey":"10dc8cf51ae3ee1c7967ffb9c9633a5ab06206535d8e1319f005a01ba33bc05d","oracleEvent":{"oracleNonces":["aca32fc8dead13983c655638ef921f1d38ef2f5286e58b2a1dab32b6e086e208","89603f8179830590fdce45eb17ba8bdf74e295a4633b58b46c9ede8274774164","5f3fcdfbba9ec75cb0868e04ec1f97089b4153fb2076bd1e017048e9df633aa1","8436d00f7331491dc6512e560a1f2414be42e893992eccb495642eefc7c5bf37","0d2593764c9c27eba0be3ca6c71a2de4e49a5f4aa1ce1e2cc379be3939547501","414318491e96919e67583db7a47eb1f8b4f1194bcb5b5dcc4fd10492d89926e4","b9a5ded7295e0343f385e5abedfd9e5f4137de8f67de0afa9396f7e0f996ef79","badf0bfe230ed605161630d8e3a092d7448461042db38912bc6c6a0ab195ff71","6e4780213cd7ed9de1300146079b897cae89dec7800065f615974193f58aa6db","7b12b48ad95634ee4ca476dd57e634fddc328e10276e71d27e0ae626fad7d699","a8058604adf590a1c38f8be19aa44175eb2d1130eb4d7f39a34f89f0a3fbed27","ffc3208f60b585cdc778be1290b352c34c22652d5348a87885816bcf17a80116","cb34c13f80b49e729e863035f30e1f8ea7777618eedb6d666c3b1c85a5b8a637","5000991f4631c0bba5d026f02125fdbe77e019dde57d31ce7f23ae3601a18623","094433a2432b81bbb6d6b7d65dc3498e2a7c9de5f35672d67097d54d920eadd2","11dff6b40b0938e1943c7888633d88871c2a2a1c16f412b22b80ba7ed8af8788","d5957f1a199b4abbc06894479c722ad0c4f120f0d5afeb76d589127213e33170","80e09bb453e6a0a444ec3ba222a62ecd59540b9dd8280566a17bebdfdfbd7a9e","0fe775b79b2172cb961e7c1aa54d521360903680680aaa55ea8be0404ee3768c","bfcdbb2cbcffba41048149d4bcf2a41cd5fd0a713df6f48104ade3022c284575"],"eventMaturityEpoch":1653865200,"eventDescriptor":{"digitDecompositionEvent":{"base":2,"isSigned":false,"unit":"usd/btc","precision":0,"nbDigits":20}},"eventId":"btcusd1653865200"}}"#).create();
+        let path: &str = &announcement_path("/", "uniqueeventid123");
+        let _m = mock("GET", path).with_body(r#"{"event_id": "uniqueeventid123", "rust_announcement": "850d0f8cba638f2902dd75ba47dbc68662356249414ae90f5f3b0e8b85663801152045b10bad679c9a02ed627a33601f61ad90d97b76f1b78155192918e42d1a57c75f44e4dde2a17c0da725c160267e3307d771a33685dcd67ec79c7614722cfdd822fd021d000e2025053441f55e0096864bba15d3ab891f1a232a8518c06ea1ac745fc7fa13fc34f4f18e5fc392db419d0bd38f47b76a0f86ac60aaa67c426804a59c8ac214ce7a2f1c67e301d87f42575582e972f4a8b16f11236ad88630049fd96c9f711ce4c62b09d89ea422b696c366a14670908c229f9c5d4c43904ff5cd5ea096e6f35d08665144ef2dbacf4a6a9fadf3075a776d202ddd491ee85afd24bc4b47e2f23918a76ebb71f473575da7f2436ca5a62482676939bb74b7e3ebb0fdf70deadf9d51c403e606827b304dd65517786bcd08345d8db9885af942b4b71e60aa18175ace4035cc5c5480b3199c02691e9d411af63f6c15e9cabbecfea8f91c001e45019e29fe0e3c745a3c531a78f2f7e393a5f3a4f7179359c8cb6a8cce976a750ab98063b4eef7a4e131978c4d3d7bfccde62b7fd76f168d446095f24da149010d905e39eec4f3b455c91a72b5554710e452a0b589cb0e1a9c96b512e0aa4a21b3f4c8e2c124685067292527a74955d15f1df9909df53f7078a41c50778052f1f0aed958559fefde8dd391184ed71d069aa90663b419b9be889b8aecceedd5bde3c395553247438ccb277897493ca90c71f4b37925e565614374d7353e7c4f1d3bbb00000005fdd80a100002000642544355534400000000000e42307830306461633663393661616438666232666637376537613666313266626236646237346235333930623534343330613232393230633139373862336538336432"}"#).create();
 
         let client = P2PDOracleClient::new(url).expect("Error creating client instance");
 
         client
-            .get_announcement("btcusd1624943400")
+            .get_announcement("uniqueeventid123")
             .expect("Error getting announcement");
     }
 
     #[test]
-    #[should_panic] // TODO: investigate that format issue (panic) is expected or not
     fn get_attestation_test() {
         let url = &mockito::server_url();
         let _pubkey_mock = pubkey_mock();
-        let path: &str = &attestation_path("/", "2021-06-29T05:10:00Z");
+        let path: &str = &attestation_path("/", "uniqueeventid123");
 
-        let _m = mock("GET", path).with_body(r#"{"eventId":"btcusd1653517020","signatures":["ee05b1211d5f974732b10107dd302da062be47cd18f061c5080a50743412f9fd590cad90cfea762472e6fe865c4223bd388c877b7881a27892e15843ff1ac360","59ab83597089b48f5b3c2fd07c11edffa6b1180bdb6d9e7d6924979292d9c53fe79396ceb0782d5941c284d1642377136c06b2d9c2b85bda5969a773a971b5b0","d1f8c31a83bb34433da5b9808bb3692dd212b9022b7bc8f269fc817e96a7195db18262e934bebd4e68a3f2c96550826a5530350662df4c86c004f5cf1121ca67","e5cec554c39c4dd544d70175128271eecad77c1e3eaa6994c657e257d5c1c9dcd19b041ea8030e75448245b7f91705ad914c32761671a6172f928904b439ea6b","a209116d20f0931113c0880e8cd22d3f003609a32322ff8df241ef16e7d4efd1a9b723f582a22073e21188635f09f41f270f3126014542861be14b62b09c0ecc","f1da0b482f08f545a92338392b71cec33d948a5e5732ee4d5c0a87bd6b6cc12feeb1498da7afd93ae48ec4ce581ee79c0e92f338d3777c2ef06578e4ec1a853c","d9ab68244a3b47cc8cbd5a972f2f5059fc6b9711dba8d4a7a23607a99b9655593bab3abc1d3b02402cd0809c3c7016c741742efb363227de2bcfdcf290a053b3","c1146c1767a947f77794d05a2f58e50af824e3c8d70adde883e58d2dc1ddb157323b0aaf8cfb5b076a12395756bdcda64ab5d4799e43c88a41993659e6d49471","0d29d9383c9ee41055e1cb40104c9ca75280162779c0162cb6bf9aca2b223aba17de4b3f0f29ae6b749f22ba467b7e9f05456e8abb3ec328f62b7a924c6d4828","2bcc54002ceb271a940f24bc6dd0562b99c2d76cfb8f145f42ac37bc34fd3e94adba1194c5be91932b818c5715c73f287e066e228d796a373c4aec67fd777070","a91f77e3435c577682ff744d6f7da66c865a42e8645276dedf2ed2b8bc4c80285dff4b553b2231592e0fa8b4f242acb6888519fe82c457cc5204e5d9d511303a","546409d6bcdcfd5bef39957c8b1b09f7805b08ec2311bc73cf6927ae11f3567ffe8428aa7faa661518e9c02a702212ab05e494aab84624c3dd1a710f8c4c369b","9d601ee8a3d28dcdfdd05581f1b24d6e5a576f0b5544eb7c9921cb87a23fdb293c1edca89b43b5b84c1e305fbe52facbe6b03575aed8f95b4faccc90e0eb45ef","636b8028e9cd6cba6be5b3c1789b62aecfc17e9c28d7a621cfad2c3cf751046528028e1dbd6cee050d5d570cf5a3d8986471d73e7edca4093e36fc8e1097fb65","57c6337b52dc7fd8f49b29105f168fc9b4cb88ed2ba5f0e9a80a21e20836f87f875c3fe92afb437dd5647630b54eda6ba1be76ba6df8b641eb2e8be8ff1182dc","9e8843e32f9de4cd6d5bb9e938fd014babe11bb1faf35fc411d754259bc374f34dd841ed91f6bb3f030bc55a4791cdc41471c33b3f05fd35b9d1768fd381f953","97da4963747ab5e50534b93274065cba4fd24e6b7a9d3310db2596af24f70961fb03535e2a5ae272f7ea14e86daafa57073631596fecf7ceadf4ae3e6941b69e","94a414569743f87f1462a503be8cff1f229096d190b8b1349519c612b74eea872d5d763570aaaa54fad0605a43d742203bce489deea5570750030191e293c253","4d7117b89aad73eca7b341749bd54ffdd459b9b8b4ff128344d09273f66a3d2c01d2c86b61f7642d6e81f488580b456685cd68660458cff83b8858a05c9a1f4d","b12153a393a4fddac3079c1878cb89afccfe0ac8f539743c0608049f445e49ac7c89e33fcf832cda8d7e8a4f4dae94a303170f16c697feed8b78015873bd5ffc"],"values":["0","0","0","0","0","1","1","1","0","1","0","0","0","0","1","1","1","0","1","0"]}"#).create();
+        let _m = mock("GET", path).with_body(r#"{"event_id": "uniqueeventid123", "rust_attestation": "57c75f44e4dde2a17c0da725c160267e3307d771a33685dcd67ec79c7614722c000e435c1226b39a15c5c838bfede48e3991a7f635fc126b4d03818309967679f8ce6caf640dd446d196e2ce7d42309737ec6c9c7deeb2d2342f7d136d1adc47d8cbdbbf9310b26fa8d0e9bf1358c805398d0c0544982b86df7cea226ba3d90df5187e7ae34c2e9d4287388818702198a76a5e64a7542f47bb47e394122ca82a013d9b9f576b113886df98924027471624157cda05ac1e591d939233bea95ff858c1f07d0dde3e7b9eac58d3f0bee20c8a3883238656a68711571fc4f3394fd447c090d0aa53d0a79c066e98f3f7e8069b0e4fab53e65003ce09e75591815414b976d85b3b54620a006f26a756530b4380cdd3d7eb9624aa82ef81b613f06a97228194364a717f0ad64de704a1492afbe24fb58f9dcb60af9bbc4d493bec5dccf559b80cb34f313a7be4224d8ca40eaf38f0a2a2cb37bff478fe95467d8861dfd124945eb1a55c0b891b7adba33c2ce682b392b588634d7dd5a0304a16ded6de705af196897ce28b517b7f00d42c3e8220fc9b06d979131e93cce043e88281dc904fbebfa4d2e0612f9c3c612f974e582d282b944a026db59850a3b6d58e5d70a8eb555382b1300c4639471aa7c6d534a495e69ab98382225baa81e88ec7c849667529468f5534e1e25e984a53ad90a84063a10c21cf82d80fed7630db3b76a7c9a7ae633e64f3cbf9b78d5e43b5c2397d75c014c23c5c3362b87065044d5a4be86e0e6cd27c97dc188477821ec2ad5bf4fc8801570342003d05ba2aaa8dffb28882103121b6dd9d067dc8beba74cdec23bc2f97f0b9d650c745fc619e6d9b9196754894f78a9c0d7389e6dba483839b9a481673b84c965b1c3c1eb206a0fffc46e9b7298d08a0cd0453d1009e75a52eeffb2b46cf67f1b11cda16f83a1ec84ee57db6e9cd7011dcf24f378117ccf72f2fdae2db8f701fcfdf957b8ce3264493b9e20af28e009962bf5741139d2c95631e70105aecb53ad1a7fce3945a9a8e61e766eb98082e6be726c0a0d0c3f53faa550fc25188f1d65dd73df394de5929c223b4a952ed3f41dbb669d78b094283e5a62e20aac76aef9d352be841e5ded6e89a5dc662a54667ec91234aab02a06db5a68c689da223b152cfc4bceb03d1097322ec1c6672a5fd562b79892a1a4eaa1f4b2850ad4dc41427ced86f509e414ce915f54c51b3734bb11f28a7bd39afb2f04775b483a8a465faf4eee5449ff63cbbcfd7d22dd0c22d6a4dd49e3d8b96c37b5736bf0a4f9472d85552c13682a9d482bdf3000e01300130013001300130013001300130013001300130013001300130"}"#).create();
 
         let client = P2PDOracleClient::new(url).expect("Error creating client instance");
 
         client
-            .get_attestation("btcusd1624943400")
+            .get_attestation("uniqueeventid123")
             .expect("Error getting attestation");
     }
 }

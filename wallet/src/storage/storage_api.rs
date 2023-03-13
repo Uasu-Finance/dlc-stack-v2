@@ -46,8 +46,8 @@ impl StorageApiProvider {
             contents.push(c.content);
         }
         for c in contents {
-            let bytes = base64::decode(c.clone()).unwrap();
-            let contract = deserialize_contract(&bytes).unwrap();
+            let bytes = base64::decode(c.clone()).map_err(to_storage_error)?;
+            let contract = deserialize_contract(&bytes)?;
             contracts.push(contract);
         }
         Ok(contracts)
@@ -87,7 +87,7 @@ impl Storage for StorageApiProvider {
         Ok(contracts)
     }
 
-    fn create_contract(&mut self, contract: &OfferedContract) -> Result<(), Error> {
+    fn create_contract(self: &StorageApiProvider, contract: &OfferedContract) -> Result<(), Error> {
         let data = serialize_contract(&Contract::Offered(contract.clone()))?;
         let uuid = get_contract_id_string(contract.id);
         info!("Create new contract with contract id {}", uuid.clone());
@@ -112,7 +112,7 @@ impl Storage for StorageApiProvider {
         }
     }
 
-    fn delete_contract(&mut self, id: &ContractId) -> Result<(), Error> {
+    fn delete_contract(self: &StorageApiProvider, id: &ContractId) -> Result<(), Error> {
         let cid = get_contract_id_string(*id);
         info!("Delete contract with contract id {}", cid.clone());
         let res = self
@@ -133,7 +133,7 @@ impl Storage for StorageApiProvider {
         }
     }
 
-    fn update_contract(&mut self, contract: &Contract) -> Result<(), Error> {
+    fn update_contract(self: &StorageApiProvider, contract: &Contract) -> Result<(), Error> {
         let contract_id: String = get_contract_id_string(contract.get_id());
         let curr_state = get_contract_state_str(contract);
         info!(
@@ -257,7 +257,7 @@ impl Storage for StorageApiProvider {
     }
 
     fn get_contract_offers(&self) -> Result<Vec<OfferedContract>, Error> {
-        let contracts_per_state = self.get_contracts_by_state("offered".to_string()).unwrap();
+        let contracts_per_state = self.get_contracts_by_state("offered".to_string())?;
         let mut res: Vec<OfferedContract> = Vec::new();
         for val in contracts_per_state {
             if let Contract::Offered(c) = val {
@@ -268,7 +268,7 @@ impl Storage for StorageApiProvider {
     }
 
     fn get_signed_contracts(&self) -> Result<Vec<SignedContract>, Error> {
-        let contracts_per_state = self.get_contracts_by_state("signed".to_string()).unwrap();
+        let contracts_per_state = self.get_contracts_by_state("signed".to_string())?;
         let mut res: Vec<SignedContract> = Vec::new();
         for val in contracts_per_state {
             if let Contract::Signed(c) = val {
@@ -279,9 +279,7 @@ impl Storage for StorageApiProvider {
     }
 
     fn get_confirmed_contracts(&self) -> Result<Vec<SignedContract>, Error> {
-        let contracts_per_state = self
-            .get_contracts_by_state("confirmed".to_string())
-            .unwrap();
+        let contracts_per_state = self.get_contracts_by_state("confirmed".to_string())?;
         let mut res: Vec<SignedContract> = Vec::new();
         for val in contracts_per_state {
             if let Contract::Confirmed(c) = val {
@@ -292,9 +290,7 @@ impl Storage for StorageApiProvider {
     }
 
     fn get_preclosed_contracts(&self) -> Result<Vec<PreClosedContract>, Error> {
-        let contracts_per_state = self
-            .get_contracts_by_state("pre_closed".to_string())
-            .unwrap();
+        let contracts_per_state = self.get_contracts_by_state("pre_closed".to_string())?;
         let mut res: Vec<PreClosedContract> = Vec::new();
         for val in contracts_per_state {
             if let Contract::PreClosed(c) = val {
@@ -302,5 +298,48 @@ impl Storage for StorageApiProvider {
             }
         }
         return Ok(res);
+    }
+
+    fn upsert_channel(
+        &self,
+        _channel: dlc_manager::channel::Channel,
+        _contract: Option<Contract>,
+    ) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn delete_channel(&self, _channel_id: &dlc_manager::ChannelId) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn get_channel(
+        &self,
+        _channel_id: &dlc_manager::ChannelId,
+    ) -> Result<Option<dlc_manager::channel::Channel>, Error> {
+        todo!()
+    }
+
+    fn get_signed_channels(
+        &self,
+        _channel_state: Option<dlc_manager::channel::signed_channel::SignedChannelStateType>,
+    ) -> Result<Vec<dlc_manager::channel::signed_channel::SignedChannel>, Error> {
+        todo!()
+    }
+
+    fn get_offered_channels(
+        &self,
+    ) -> Result<Vec<dlc_manager::channel::offered_channel::OfferedChannel>, Error> {
+        todo!()
+    }
+
+    fn persist_chain_monitor(
+        &self,
+        _monitor: &dlc_manager::chain_monitor::ChainMonitor,
+    ) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn get_chain_monitor(&self) -> Result<Option<dlc_manager::chain_monitor::ChainMonitor>, Error> {
+        todo!()
     }
 }

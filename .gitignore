@@ -11,6 +11,7 @@
 **/*.rs.bk
 /events_db*
 /contracts_db
+/wallet_db
 .vscode
 .env
 !.env.tempalte
