@@ -5,6 +5,7 @@ extern crate log;
 extern crate rouille;
 
 use std::{
+    cmp,
     collections::HashMap,
     env, panic,
     str::FromStr,
@@ -131,6 +132,10 @@ fn main() {
 
     // Start periodic_check thread
 
+    let bitcoin_check_interval_seconds: u64 = env::var("BITCOIN_CHECK_INTERVAL_SECONDS")
+        .unwrap_or("10".to_string())
+        .parse::<u64>()
+        .unwrap_or(10);
     let man2 = manager.clone();
     info!("periodic_check loop thread starting");
     debug!("Wallet address: {:?}", wallet.get_new_address());
@@ -145,7 +150,9 @@ fn main() {
         wallet
             .refresh()
             .unwrap_or_else(|e| println!("Error refreshing wallet {e}"));
-        thread::sleep(Duration::from_millis(10000));
+        thread::sleep(Duration::from_millis(
+            cmp::max(10, bitcoin_check_interval_seconds) * 1000,
+        ));
     });
 
     rouille::start_server(format!("0.0.0.0:{}", wallet_backend_port), move |request| {
