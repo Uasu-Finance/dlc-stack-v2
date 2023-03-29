@@ -36,6 +36,21 @@ The it module provides basic integration tests using BDD (Behavior-Driven Develo
 make build
 ```
 
-## License 
+## Known Build Errors
+
+On Apple silicon (M1, M2) there are some known difficulties building the diesel package. This may materialize as something like the following:
+```bash
+  = note: ld: warning: directory not found for option '-L/usr/local/lib/postgresql@14'
+          ld: library not found for -lpq
+          clang: error: linker command failed with exit code 1 (use -v to see invocation)
+```
+Running the build in the following way may solve this problem. `RUSTFLAGS='-L /opt/homebrew/opt/libpq/lib' cargo build`
+
+The following thread discusses in more details.
+https://github.com/diesel-rs/diesel/issues/2605
+
+
+
+## License
 
 APM 2.0
