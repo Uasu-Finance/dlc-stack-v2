@@ -31,6 +31,7 @@ jobs:
       run: |
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest -f docker/Dockerfile .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $REGISTRY/$REGISTRY_ALIAS/$REPOSITORY:latest
   build-wallet-public:
     name: Build Protocol Wallet and Push to ECR Public on Master
     runs-on: ubuntu-latest
