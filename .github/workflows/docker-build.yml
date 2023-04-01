@@ -29,9 +29,8 @@ jobs:
         ECR_REPOSITORY: dlc-link-stack
         IMAGE_TAG: ${{ github.ref_name }}-${{ steps.vars.outputs.sha_short }}
       run: |
-        docker build -t $REGISTRY/$REGISTRY_ALIAS/$REPOSITORY:$IMAGE_TAG -t $REGISTRY/$REGISTRY_ALIAS/$REPOSITORY:latest -f docker/Dockerfile .
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest -f docker/Dockerfile .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        docker push $REGISTRY/$REGISTRY_ALIAS/$REPOSITORY:latest
   build-wallet-public:
     name: Build Protocol Wallet and Push to ECR Public on Master
     runs-on: ubuntu-latest
