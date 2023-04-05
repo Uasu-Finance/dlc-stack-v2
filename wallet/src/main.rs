@@ -370,7 +370,7 @@ fn create_new_offer(
     // Some regtest networks have an unreliable fee estimation service
     let fee_rate = match active_network {
         bitcoin::Network::Regtest => 1,
-        _ => blockchain.get_est_sat_per_1000_weight(ConfirmationTarget::HighPriority) as u64,
+        _ => blockchain.get_est_sat_per_1000_weight(ConfirmationTarget::Normal) as u64,
     };
 
     let contract_input = ContractInput {
