@@ -30,7 +30,7 @@ jobs:
           env:
             ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
             ECR_REPOSITORY: dlc-link-stack
-            IMAGE_TAG: ${{ github.ref_name }}-${{ steps.vars.outputs.sha_short }}
+            IMAGE_TAG: ${{ github.ref_name }}
           run: |
             docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest -f docker/Dockerfile .
             docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
@@ -59,7 +59,7 @@ jobs:
             REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
             REGISTRY_ALIAS: dlc-link
             REPOSITORY: dlc-protocol-wallet
-            IMAGE_TAG: ${{ github.ref_name }}-${{ steps.vars.outputs.sha_short }}
+            IMAGE_TAG: ${{ github.ref_name }}
           run: |
             docker build -t $REGISTRY/$REGISTRY_ALIAS/$REPOSITORY:$IMAGE_TAG -f wallet/Dockerfile .
             docker push $REGISTRY/$REGISTRY_ALIAS/$REPOSITORY:$IMAGE_TAG
