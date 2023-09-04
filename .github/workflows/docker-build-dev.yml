@@ -4,7 +4,7 @@ name: Build docker
 
 on:
   push:
-    branches: [1.0/prerelease]
+    branches: [dev]
 
 jobs:
   build-storageapi-public:

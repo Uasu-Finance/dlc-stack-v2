@@ -1,11 +1,11 @@
-# Build on PR to 1.0/prerelease / master branch
+# Build on PR to dev / master branch
 
-name: Build docker images on PR
+name: Build & docker
 
 on:
   pull_request:
     branches:
-      - 1.0/prerelease
+      - dev
       - master
     types:
       - opened
