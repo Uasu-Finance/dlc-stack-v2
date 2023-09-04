@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+.env
+!.env.template
+.idea
+/contracts_db
+.vscode
+/www/dist/**
+
+
+node_modules

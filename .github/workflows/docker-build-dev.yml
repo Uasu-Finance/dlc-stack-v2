@@ -1,0 +1,132 @@
+# Build and push docker image on push to dev branch
+
+name: Build docker
+
+on:
+  push:
+    branches: [1.0/prerelease]
+
+jobs:
+  build-storageapi-public:
+    name: Build storage-api and Push to ECR Public on Dev Push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.TF_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TF_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Login to Amazon ECR Public
+        id: login-ecr-public
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          registry-type: public
+      - name: Set outputs
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      - name: Build, tag, and push storage-api to Amazon ECR
+        env:
+          ECR_PUBLIC_REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
+          REGISTRY_ALIAS: dlc-link
+          ECR_REPOSITORY: storage-api
+          IMAGE_TAG: dev-${{ steps.vars.outputs.sha_short }}
+        run: |
+          docker build -t $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:dev -f storage/Dockerfile .
+          docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:dev
+
+  build-attestor-public:
+    name: Build Attestor and Push to ECR Public on Dev Push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.TF_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TF_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Login to Amazon ECR Public
+        id: login-ecr-public
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          registry-type: public
+      - name: Set outputs
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      - name: Build and push docker image
+        env:
+          ECR_PUBLIC_REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
+          REGISTRY_ALIAS: dlc-link
+          ECR_REPOSITORY: dlc-attestor
+          IMAGE_TAG: dev-${{ steps.vars.outputs.sha_short }}
+        run: |
+          docker build -t $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:dev -f attestor/Dockerfile .
+          docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:dev
+
+  build-BI-public:
+    name: Build Blockchain Interface and Push to ECR Public on Dev Push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.TF_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TF_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Login to Amazon ECR Public
+        id: login-ecr-public
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          registry-type: public
+      - name: Set outputs
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      - name: Build and push docker image
+        env:
+          ECR_PUBLIC_REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
+          REGISTRY_ALIAS: dlc-link
+          ECR_REPOSITORY: dlc-blockchain-interface
+          IMAGE_TAG: dev-${{ steps.vars.outputs.sha_short }}
+        run: |
+          docker build -t $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:dev -f wallet-blockchain-interface/Dockerfile .
+          docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:dev
+
+  build-wallet-public:
+    name: Build Protocol Wallet and Push to ECR Public on Dev Push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.TF_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TF_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Login to Amazon ECR Public
+        id: login-ecr-public
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          registry-type: public
+      - name: Set outputs
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      - name: Build and push docker image
+        env:
+          ECR_PUBLIC_REGISTRY: ${{ steps.login-ecr-public.outputs.registry }}
+          REGISTRY_ALIAS: dlc-link
+          ECR_REPOSITORY: dlc-protocol-wallet
+          IMAGE_TAG: dev-${{ steps.vars.outputs.sha_short }}
+        run: |
+          docker build -t $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:dev -f wallet/Dockerfile .
+          docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:dev
