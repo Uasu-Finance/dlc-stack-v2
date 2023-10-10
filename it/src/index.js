@@ -14,22 +14,16 @@ const handleAttestors = process.env.HANDLE_ATTESTORS == 'true';
 const testUUID = process.env.UUID || `test${Math.floor(Math.random() * 1000)}`;
 const successfulAttesting = process.env.SUCCESSFUL_ATTESTING == 'true';
 
-// const attestorListReplaced = attestorList.map((attestorURL) =>
-//   attestorURL.replace("localhost", "host.docker.internal")
-// );
+const acceptorGetsAllOutcome = 0;
+const offererGetsAllOutcome = 100;
 
-function createMaturationDate() {
-  const maturationDate = new Date();
+const totalOutcomes = 100;
 
-  maturationDate.setMinutes(maturationDate.getMinutes() + 1);
-  return maturationDate.toISOString();
-}
+const acceptCollateral = 10000;
 
 async function createEvent(attestorURL, uuid) {
-  const maturationDate = createMaturationDate();
   try {
     const url = `${attestorURL}/create-announcement/${uuid}`;
-    console.log('Creating event at: ', url);
     const response = await fetch(url);
     const event = await response.json();
     return event;
@@ -53,9 +47,9 @@ async function attest(attestorURL, uuid, outcome) {
 async function fetchOfferFromProtocolWallet() {
   let body = {
     uuid: testUUID,
-    acceptCollateral: 10000,
+    acceptCollateral: acceptCollateral,
     offerCollateral: 0,
-    totalOutcomes: 100,
+    totalOutcomes: totalOutcomes,
     attestorList: JSON.stringify(attestorList),
   };
 
@@ -88,53 +82,89 @@ async function sendAcceptedOfferToProtocolWallet(accepted_offer) {
   }
 }
 
-async function unlockUTXOsInProtocolWallet() {
+async function checkBalance(dlcManager, action) {
+  const balance = await dlcManager.get_wallet_balance();
+  console.log(`DLC Wasm Wallet Balance at ${action}: ` + balance);
+  return balance;
+}
+
+async function fetchTxDetails(txId) {
+  const url = `${process.env.ELECTRUM_API_URL}/tx/${txId}`;
   try {
-    const res = await fetch(`${protocolWalletURL}/unlockutxos`, {
-      method: 'put',
+    const res = await fetch(url, {
+      method: 'get',
       headers: { 'Content-Type': 'application/json' },
     });
     return await res.json();
   } catch (error) {
-    console.error('Error unlocking UTXOs: ', error);
+    console.error('Error fetching Funding TX, the broadcast possibly failed', error);
     process.exit(1);
   }
 }
 
-async function waitForBalance(dlcManager) {
-  let balance = 0;
-  while (balance <= 0) {
-    balance = await dlcManager.get_wallet_balance();
-    console.log('DLC Wasm Wallet Balance: ' + balance);
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+async function retry(checkFunction, timeoutTime) {
+  let timeRemaining = timeoutTime;
+  while (timeRemaining) {
+    const result = await checkFunction();
+    if (result) return true;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    timeRemaining -= 2000;
+  }
+  return false;
+}
+
+function assert(predicate, message) {
+  if (!predicate) {
+    console.error(message);
+    process.exit(1);
   }
 }
 
+async function waitForConfirmations(blockchainHeightAtBroadcast, targetConfirmations) {
+  const url = `${process.env.ELECTRUM_API_URL}/blocks/tip/height`;
+  let currentBlockchainHeight = blockchainHeightAtBroadcast;
+  while (Number(currentBlockchainHeight) - Number(blockchainHeightAtBroadcast) < targetConfirmations) {
+    currentBlockchainHeight = await (await fetch(url)).json();
+    console.log(
+      `Confirmations: ${Number(currentBlockchainHeight) - Number(blockchainHeightAtBroadcast)} / ${targetConfirmations}`
+    );
+    await new Promise((resolve) => setTimeout(resolve, 15000));
+  }
+  return true;
+}
+
+async function checkIfContractIsInState(contractID, state) {
+  const routerWalletInfo = await (await fetch(`${protocolWalletURL}/info`)).json();
+  return routerWalletInfo.contracts[state].includes(contractID);
+}
+
+async function getBlockchainHeight() {
+  const url = `${process.env.ELECTRUM_API_URL}/blocks/tip/height`;
+  const currentBlockchainHeight = await (await fetch(url)).json();
+  return currentBlockchainHeight;
+}
+
 async function main() {
-  console.log('DLC Integration Test flow');
+  console.log('Starting DLC Integration Test');
 
-  // TODO:
-  // - wait for protocol wallet to be ready
-  // - check& retry for protocol wallet balance
-
+  //Creating Events
   if (handleAttestors) {
     console.log('Creating Events');
     const events = await Promise.all(attestorList.map((attestorURL) => createEvent(attestorURL, testUUID)));
     console.log('Created Events: ', events);
   }
 
-  // console.log("Unlocking UTXOs in Protocol Wallet");
-  // await unlockUTXOsInProtocolWallet();
-
+  //Fetching Offer
   console.log('Fetching Offer from Protocol Wallet');
   const offerResponse = await fetchOfferFromProtocolWallet();
+
+  //Check if the offer is valid
   if (!offerResponse.temporaryContractId) {
-    console.log('Error fetching offer from protocol wallet: ', offerResponse);
+    console.error('Error fetching offer from protocol wallet: ', offerResponse);
     process.exit(1);
   }
-  console.log('Received Offer (JSON): ', offerResponse);
 
-  // creates a new instance of the JsDLCInterface
+  //Creating DLC Manager Interface
   const dlcManager = await JsDLCInterface.new(
     testWalletPrivateKey,
     testWalletAddress,
@@ -143,56 +173,109 @@ async function main() {
     JSON.stringify(attestorList)
   );
 
-  console.log('DLC Manager Interface Options: ', dlcManager.get_options());
+  //Checking Balance
+  const startingBalance = await checkBalance(dlcManager, '[TEST START]');
 
-  async function fetchTxDetails(txId) {
-    try {
-      const res = await fetch(`https://devnet.dlc.link/electrs/tx/${txId}`, {
-        method: 'get',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      return await res.json();
-    } catch (error) {
-      console.error('Error fetching funding tx, maybe the broadcast failed?: ', error);
-      process.exit(1);
-    }
-  }
-
-  await waitForBalance(dlcManager);
-
+  //Accepting Offer
   const acceptedContract = await dlcManager.accept_offer(JSON.stringify(offerResponse));
-  const pared_response = JSON.parse(acceptedContract);
-  if (!pared_response.protocolVersion) {
-    console.log('Error accepting offer: ', pared_response);
+  const parsedResponse = JSON.parse(acceptedContract);
+
+  //Check if the accepted contract is valid
+  if (!parsedResponse.protocolVersion) {
+    console.log('Error accepting offer: ', parsedResponse);
     process.exit(1);
   }
-  console.log('Contract accepted: ', pared_response);
 
+  //Sending Accepted Offer to Protocol Wallet
   const signedContract = await sendAcceptedOfferToProtocolWallet(acceptedContract);
-  console.log('Contract signed: ', signedContract);
+
+  //Check if the signed contract is valid
+  if (!signedContract.contractId) {
+    console.log('Error signing offer: ', signedContract);
+    process.exit(1);
+  }
+  const contractID = signedContract.contractId;
+
+  //Check if the contract is in the Signed state
+  assert(
+    retry(async () => checkIfContractIsInState(contractID, 'Signed'), 15000),
+    `Contract state is not updated in the Router Wallet to Signed`
+  );
 
   const txID = await dlcManager.countersign_and_broadcast(JSON.stringify(signedContract));
+  let blockchainHeightAtBroadcast = await getBlockchainHeight();
   console.log(`Broadcast funding transaction with TX ID: ${txID}`);
 
-  // wait for 3 seconds for electrs to get it's act together
-  console.log('Fetching tx details to make sure the broadcast was successful...');
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-  // fetch the tx details from electrs to make sure it was broadcasted
-  const txDetails = await fetchTxDetails(txID);
-  console.log('Funding TX Details: ', txDetails);
+  //Fetching Funding TX Details to check if the broadcast was successful
+  console.log('Fetching Funding TX Details');
+  await fetchTxDetails(txID);
 
+  //Waiting for funding transaction confirmations
+  const confirmedBroadcastTransaction = await waitForConfirmations(blockchainHeightAtBroadcast, 6);
+  if (confirmedBroadcastTransaction) {
+    console.log('Funding transaction confirmed');
+  }
+
+  //Check if the contract is in the Confirmed state
+  assert(
+    retry(async () => checkIfContractIsInState(contractID, 'Confirmed'), 15000),
+    `Contract state is not updated in the Router Wallet to Confirmed`
+  );
+
+  //Check if the balance decreased after broadcasting the funding transaction
+  const balanceAfterFunding = await checkBalance(dlcManager, '[CONTRACT CONFIRMED]');
+  assert(
+    Number(balanceAfterFunding) < Number(startingBalance),
+    'BTC Balance did not decrease after broadcasting Funding TX'
+  );
+
+  //Attesting to Events
   if (handleAttestors) {
     console.log('Attesting to Events');
     const attestations = await Promise.all(
       attestorList.map((attestorURL, index) =>
-        attest(attestorURL, testUUID, successfulAttesting ? 100 : index === 0 ? 0 : 100)
+        attest(
+          attestorURL,
+          testUUID,
+          successfulAttesting
+            ? acceptorGetsAllOutcome
+            : index === offererGetsAllOutcome
+            ? offererGetsAllOutcome
+            : acceptorGetsAllOutcome
+        )
       )
     );
     console.log('Attestation received: ', attestations);
   }
 
-  const contracts = await dlcManager.get_contracts();
-  console.log('Contracts: ', contracts);
+  //Check if the contract is in the PreClosed state
+  assert(
+    retry(async () => checkIfContractIsInState(contractID, 'PreClosed'), 15000),
+    `Contract state is not updated in the Router Wallet to PreClosed`
+  );
+
+  //Waiting for funding transaction confirmations
+  blockchainHeightAtBroadcast = await getBlockchainHeight();
+  const confirmedClosingTransaction = await waitForConfirmations(blockchainHeightAtBroadcast, 6);
+  if (confirmedClosingTransaction) {
+    console.log('Closing transaction confirmed');
+  }
+
+  //Check if the contract is in the Closed state
+  assert(
+    retry(async () => checkIfContractIsInState(contractID, 'Closed'), 15000),
+    `Contract state is not updated in the Router Wallet to Closed`
+  );
+
+  //Check if the balance increased after closing the contract
+  checkBalance(dlcManager, '[CONTRACT CLOSED]').then((balanceAfterClosing) => {
+    assert(
+      Number(balanceAfterFunding) + Number(acceptCollateral) === Number(balanceAfterClosing),
+      'Balance after closing does not match the expected value'
+    );
+  });
+
+  process.exit(0);
 }
 
 main();
