@@ -16,12 +16,7 @@ use secp256k1_zkp::Secp256k1;
 
 use core::panic;
 use std::fmt;
-use std::{
-    collections::HashMap,
-    io::Cursor,
-    str::FromStr,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, io::Cursor, str::FromStr, sync::Arc};
 
 use dlc_manager::{contract::Contract, ContractId, SystemTimeProvider};
 
@@ -108,7 +103,7 @@ struct UtxoInput {
 #[wasm_bindgen]
 pub struct JsDLCInterface {
     options: JsDLCInterfaceOptions,
-    manager: Arc<Mutex<DlcManager>>,
+    manager: DlcManager,
     wallet: Arc<JSInterfaceWallet>,
     blockchain: Arc<EsploraAsyncBlockchainProviderJsWallet>,
 }
@@ -202,13 +197,13 @@ impl JsDLCInterface {
         let time_provider = SystemTimeProvider {};
 
         // Create the DLC Manager
-        let manager = Arc::new(Mutex::new(Manager::new(
+        let manager = Manager::new(
             Arc::clone(&wallet),
             Arc::clone(&blockchain),
             Box::new(dlc_store),
             attestors,
             Arc::new(time_provider),
-        )?));
+        )?;
 
         match blockchain.refresh_chain_data(options.address.clone()).await {
             Ok(_) => (),
@@ -263,7 +258,6 @@ impl JsDLCInterface {
         // let mut errors: Vec<WalletError> = vec![];
         let contracts: Vec<JsContract> = self
             .manager
-            .lock()?
             .get_store()
             .get_contracts()
             .await?
@@ -285,12 +279,7 @@ impl JsDLCInterface {
     pub async fn get_contract(&self, contract_str: String) -> Result<JsValue, JsError> {
         let contract_id =
             ContractId::read(&mut Cursor::new(&contract_str)).map_err(to_wallet_error)?;
-        let contract = self
-            .manager
-            .lock()?
-            .get_store()
-            .get_contract(&contract_id)
-            .await?;
+        let contract = self.manager.get_store().get_contract(&contract_id).await?;
         match contract {
             Some(contract) => Ok(serde_wasm_bindgen::to_value(&JsContract::from_contract(
                 contract,
@@ -311,15 +300,11 @@ impl JsDLCInterface {
                 .parse()
                 .map_err(|e: UpstreamError| WalletError(e.to_string()))?;
             self.manager
-                .lock()
-                .map_err(to_wallet_error)?
                 .on_dlc_message(&Message::Offer(dlc_offer_message.clone()), counterparty)
                 .await
                 .map_err(to_wallet_error)?;
             let (_contract_id, _public_key, accept_msg) = self
                 .manager
-                .lock()
-                .map_err(to_wallet_error)?
                 .accept_contract_offer(&temporary_contract_id)
                 .await
                 .map_err(to_wallet_error)?;
@@ -342,8 +327,6 @@ impl JsDLCInterface {
             let dlc_sign_message: SignDlc =
                 serde_json::from_str(&dlc_sign_message).map_err(to_wallet_error)?;
             self.manager
-                .lock()
-                .map_err(to_wallet_error)?
                 .on_dlc_message(
                     &Message::Sign(dlc_sign_message.clone()),
                     STATIC_COUNTERPARTY_NODE_ID
@@ -352,8 +335,7 @@ impl JsDLCInterface {
                 )
                 .await
                 .map_err(to_wallet_error)?;
-            let manager = self.manager.lock().map_err(to_wallet_error)?;
-            let store = manager.get_store();
+            let store = self.manager.get_store();
             let contract = store
                 .get_signed_contracts()
                 .await
@@ -386,8 +368,6 @@ impl JsDLCInterface {
                 ContractId::read(&mut Cursor::new(&contract_id)).map_err(to_wallet_error)?;
             let contract = self
                 .manager
-                .lock()
-                .map_err(to_wallet_error)?
                 .get_store()
                 .get_contract(&contract_id)
                 .await
@@ -395,8 +375,6 @@ impl JsDLCInterface {
 
             if let Some(Contract::Offered(c)) = contract {
                 self.manager
-                    .lock()
-                    .map_err(to_wallet_error)?
                     .get_store()
                     .update_contract(&Contract::Rejected(c))
                     .await
