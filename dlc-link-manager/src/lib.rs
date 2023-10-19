@@ -1,4 +1,7 @@
 #![feature(async_fn_in_trait)]
+#![deny(clippy::unwrap_used)]
+#![deny(unused_mut)]
+#![deny(dead_code)]
 //! #Manager a component to create and update DLCs.
 
 extern crate dlc_manager;
@@ -94,7 +97,7 @@ where
     O::Target: AsyncOracle,
     T::Target: Time,
 {
-    oracles: HashMap<XOnlyPublicKey, O>,
+    oracles: Option<HashMap<XOnlyPublicKey, O>>,
     wallet: W,
     blockchain: B,
     store: S,
@@ -158,7 +161,7 @@ where
         wallet: W,
         blockchain: B,
         store: S,
-        oracles: HashMap<XOnlyPublicKey, O>,
+        oracles: Option<HashMap<XOnlyPublicKey, O>>,
         time: T,
     ) -> Result<Self, Error> {
         Ok(Manager {
@@ -208,6 +211,16 @@ where
         contract_input: &ContractInput,
         counter_party: PublicKey,
     ) -> Result<OfferDlc, Error> {
+        let manager_oracles = match &self.oracles {
+            // Oracles is now an optional field, so check here before continuing.
+            Some(oracles) => oracles,
+            None => {
+                return Err(Error::InvalidParameters(
+                    "Manager instantiated without oracles, send_offer function not supported"
+                        .to_string(),
+                ));
+            }
+        };
         contract_input.validate()?;
 
         // let contract_infos = &contract_input.contract_infos;
@@ -215,7 +228,9 @@ where
         let event_id = &contract_input
             .contract_infos
             .first()
-            .unwrap()
+            .ok_or(Error::InvalidParameters(
+                "Contract Input Info missing".to_string(),
+            ))?
             .oracles
             .event_id;
         let oracle_set: Vec<Vec<&O>> = contract_input
@@ -225,17 +240,15 @@ where
                 x.oracles
                     .public_keys
                     .iter()
-                    .map(|pubkey| {
-                        self.oracles
-                            .get(pubkey)
-                            .ok_or_else(|| {
-                                Error::InvalidParameters("Unknown oracle public key".to_string())
-                            })
-                            .unwrap()
+                    .map(|pubkey| match manager_oracles.get(pubkey) {
+                        Some(x) => Ok(x),
+                        None => Err(Error::InvalidParameters(
+                            "Unknown oracle public key".to_string(),
+                        )),
                     })
-                    .collect::<Vec<&O>>()
+                    .collect::<Result<Vec<&O>, Error>>()
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<Vec<&O>>, Error>>()?;
 
         let mut oracle_announcements = Vec::new();
 
@@ -455,20 +468,19 @@ where
         let mut contracts_to_confirm = Vec::new();
         for c in self.store.get_signed_contracts().await? {
             match self.check_signed_contract(&c).await {
-                Ok(true) => contracts_to_confirm.push((
-                    c.accepted_contract.get_contract_id(),
-                    c.accepted_contract
+                Ok(true) => {
+                    let contract_id = c.accepted_contract.get_contract_id();
+                    let oracle_event_id = c
+                        .accepted_contract
                         .offered_contract
                         .contract_info
                         .get(0)
-                        .unwrap()
-                        .oracle_announcements
-                        .get(0)
-                        .unwrap()
-                        .oracle_event
-                        .event_id
-                        .clone(),
-                )),
+                        .and_then(|info| info.oracle_announcements.get(0))
+                        .map(|announcement| announcement.oracle_event.event_id.clone())
+                        .ok_or(Error::InvalidState("Missing oracle event ID".to_string()))?;
+
+                    contracts_to_confirm.push((contract_id, oracle_event_id));
+                }
                 Ok(false) => (),
                 Err(e) => error!(
                     "Error checking confirmed contract {}: {}",
@@ -496,20 +508,19 @@ where
                         e
                     )
                 }
-                Ok(true) => contracts_to_close.push((
-                    c.accepted_contract.get_contract_id(),
-                    c.accepted_contract
+                Ok(true) => {
+                    let contract_id = c.accepted_contract.get_contract_id();
+                    let oracle_event_id = c
+                        .accepted_contract
                         .offered_contract
                         .contract_info
                         .get(0)
-                        .unwrap()
-                        .oracle_announcements
-                        .get(0)
-                        .unwrap()
-                        .oracle_event
-                        .event_id
-                        .clone(),
-                )),
+                        .and_then(|info| info.oracle_announcements.get(0))
+                        .map(|announcement| announcement.oracle_event.event_id.clone())
+                        .ok_or(Error::InvalidState("Missing oracle event ID".to_string()))?;
+
+                    contracts_to_close.push((contract_id, oracle_event_id));
+                }
                 Ok(false) => (),
             }
         }
@@ -520,7 +531,17 @@ where
     async fn get_closable_contract_info<'a>(
         &'a self,
         contract: &'a SignedContract,
-    ) -> ClosableContractInfo<'a> {
+    ) -> Result<ClosableContractInfo<'a>, Error> {
+        let manager_oracles = match &self.oracles {
+            // Oracles is now an optional field, so check here before continuing.
+            Some(oracles) => oracles,
+            None => {
+                return Err(Error::InvalidParameters(
+                    "Manager instantiated without oracles, get_closable_contract_info function not supported"
+                        .to_string(),
+                ));
+            }
+        };
         let contract_infos = &contract.accepted_contract.offered_contract.contract_info;
         let adaptor_infos = &contract.accepted_contract.adaptor_infos;
         for (contract_info, adaptor_info) in contract_infos.iter().zip(adaptor_infos.iter()) {
@@ -529,36 +550,49 @@ where
                 .iter()
                 .enumerate()
                 .collect();
+
             if announcements.len() >= contract_info.threshold {
                 let attestations: Vec<_> = futures::future::join_all(announcements.iter().map(
                     |(i, announcement)| async move {
-                        let oracle = self.oracles.get(&announcement.oracle_public_key).unwrap();
-                        (
-                            *i,
-                            oracle
-                                .get_attestation(&announcement.oracle_event.event_id)
-                                .await
-                                .ok(),
-                        )
+                        let oracle = match manager_oracles.get(&announcement.oracle_public_key) {
+                            Some(x) => x,
+                            None => {
+                                return Err(Error::InvalidParameters(
+                                    "Unknown oracle public key".to_string(),
+                                ));
+                            }
+                        };
+
+                        let attestation = oracle
+                            .get_attestation(&announcement.oracle_event.event_id)
+                            .await
+                            .map_err(|err| Error::OracleError(err.to_string()))?;
+
+                        Ok((*i, attestation))
                     },
                 ))
                 .await;
                 let attestations: Vec<_> = attestations
                     .iter()
-                    .filter(|&pair| pair.1.is_some())
-                    .map(|pair| (pair.0, pair.1.as_ref().unwrap().clone()))
+                    .filter(|&pair| pair.is_ok())
+                    .flat_map(|pair| {
+                        pair.as_ref()
+                            .map(|(i, attestation)| (*i, attestation.clone()))
+                    })
                     .collect();
+
                 if attestations.len() >= contract_info.threshold {
-                    return Some((contract_info, adaptor_info, attestations));
+                    return Ok(Some((contract_info, adaptor_info, attestations)));
                 }
             }
         }
-        None
+
+        Ok(None)
     }
 
     async fn check_confirmed_contract(&self, contract: &SignedContract) -> Result<bool, Error> {
         let closable_contract_info = self.get_closable_contract_info(contract).await;
-        if let Some((contract_info, adaptor_info, attestations)) = closable_contract_info {
+        if let Ok(Some((contract_info, adaptor_info, attestations))) = closable_contract_info {
             let cet = crate::dlc_manager::contract_updater::get_signed_cet(
                 &self.secp,
                 contract,
@@ -598,21 +632,20 @@ where
         let mut contracts_to_close = Vec::new();
         for c in self.store.get_preclosed_contracts().await? {
             match self.check_preclosed_contract(&c).await {
-                Ok(true) => contracts_to_close.push((
-                    c.signed_contract.accepted_contract.get_contract_id(),
-                    c.signed_contract
+                Ok(true) => {
+                    let contract_id = c.signed_contract.accepted_contract.get_contract_id();
+                    let oracle_event_id = c
+                        .signed_contract
                         .accepted_contract
                         .offered_contract
                         .contract_info
                         .get(0)
-                        .unwrap()
-                        .oracle_announcements
-                        .get(0)
-                        .unwrap()
-                        .oracle_event
-                        .event_id
-                        .clone(),
-                )),
+                        .and_then(|info| info.oracle_announcements.get(0))
+                        .map(|announcement| announcement.oracle_event.event_id.clone())
+                        .ok_or(Error::InvalidState("Missing oracle event ID".to_string()))?;
+
+                    contracts_to_close.push((contract_id, oracle_event_id));
+                }
                 Ok(false) => (),
                 Err(e) => error!(
                     "Error checking pre-closed contract {}: {}",
