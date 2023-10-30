@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{task, time};
 
 use core::panic;
+use std::net::Ipv4Addr;
 use std::time::Duration;
 use std::{collections::HashMap, env, str::FromStr, sync::Arc};
 
@@ -116,17 +117,22 @@ async fn generate_attestor_client(
     let mut attestor_clients = HashMap::new();
 
     for url in attestor_urls.iter() {
-        let p2p_client: AttestorClient = retry!(
+        let p2p_client = match retry!(
             AttestorClient::new(url).await,
             10,
-            "attestor client creation"
-        );
+            "attestor client creation",
+            6
+        ) {
+            Ok(client) => client,
+            Err(e) => {
+                panic!("Error creating attestor client: {}", e);
+            }
+        };
         let attestor = Arc::new(p2p_client);
         attestor_clients.insert(attestor.get_public_key().await, attestor.clone());
     }
     attestor_clients
 }
-
 fn build_success_response(message: String) -> Result<Response<Body>, GenericError> {
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -147,7 +153,7 @@ fn build_error_response(message: String) -> Result<Response<Body>, GenericError>
         .body(Body::from(
             json!(
                 {
-                    "status": 400,
+                    "status": StatusCode::BAD_REQUEST.as_u16(),
                     "errors": vec![ErrorResponse {
                         message: message.to_string(),
                         code: None,
@@ -165,6 +171,7 @@ async fn process_request(
     wallet: Arc<DlcWallet>,
     active_network: String,
     blockchain_interface_url: String,
+    attestor_urls: Vec<String>,
 ) -> Result<Response<Body>, GenericError> {
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/health") => build_success_response(
@@ -203,7 +210,7 @@ async fn process_request(
                     serde_json::from_reader(whole_body.reader()).map_err(|e| {
                         WalletError(format!(
                             "Error parsing http input to create Offer endpoint: {}",
-                            e.to_string()
+                            e
                         ))
                     })?;
 
@@ -211,6 +218,14 @@ async fn process_request(
                     serde_json::from_str(&req.attestor_list.clone()).map_err(|e| {
                         WalletError(format!("Error deserializing attestor list: {}", e))
                     })?;
+
+                match bitcoin_contract_attestor_urls
+                    .iter()
+                    .any(|url| !attestor_urls.contains(url))
+                {
+                    true => Err(WalletError(format!("Attestor not found in attestor list"))),
+                    _ => Ok(()),
+                }?;
 
                 let bitcoin_contract_attestors: HashMap<XOnlyPublicKey, Arc<AttestorClient>> =
                     generate_attestor_client(bitcoin_contract_attestor_urls.clone()).await;
@@ -272,10 +287,19 @@ async fn main() -> Result<(), GenericError> {
     tracing_subscriber::fmt::init();
 
     let wallet_backend_port: String = env::var("WALLET_BACKEND_PORT").unwrap_or("8085".to_string());
+    let wallet_ip: Ipv4Addr = env::var("WALLET_IP")
+        .unwrap_or("127.0.0.1".to_string())
+        .parse()
+        .unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
+    debug!("Wallet IP: {}", wallet_ip);
 
     task::spawn(async {
         let wallet_backend_port: String =
             env::var("WALLET_BACKEND_PORT").unwrap_or("8085".to_string());
+        let wallet_ip: Ipv4Addr = env::var("WALLET_IP")
+            .unwrap_or("127.0.0.1".to_string())
+            .parse()
+            .unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
         let bitcoin_check_interval_seconds: u64 = env::var("BITCOIN_CHECK_INTERVAL_SECONDS")
             .unwrap_or("60".to_string())
             .parse::<u64>()
@@ -284,8 +308,8 @@ async fn main() -> Result<(), GenericError> {
             time::sleep(Duration::from_secs(bitcoin_check_interval_seconds)).await;
             match reqwest::Client::new()
                 .get(format!(
-                    "http://localhost:{}/periodic_check",
-                    wallet_backend_port
+                    "http://{}:{}/periodic_check",
+                    wallet_ip, wallet_backend_port
                 ))
                 .timeout(REQWEST_TIMEOUT)
                 .send()
@@ -299,9 +323,9 @@ async fn main() -> Result<(), GenericError> {
         }
     });
 
-    // Setup env vars
     let blockchain_interface_url = env::var("BLOCKCHAIN_INTERFACE_URL")
         .expect("BLOCKCHAIN_INTERFACE_URL environment variable not set, couldn't get attestors");
+    debug!("Blockchain interface url: {}", blockchain_interface_url);
     let xpriv_str = env::var("XPRIV")
     .expect("XPRIV environment variable not set, please run `just generate-key`, securely backup the output, and set this env_var accordingly");
     let xpriv = ExtendedPrivKey::from_str(&xpriv_str).expect("Unable to decode xpriv env variable");
@@ -338,18 +362,32 @@ async fn main() -> Result<(), GenericError> {
     let (pubkey_ext, wallet) = setup_wallets(xpriv, active_network);
 
     // Set up Attestor Clients
-    let attestor_urls: Vec<String> = retry!(
+    let attestor_urls: Vec<String> = match retry!(
         get_attestors(blockchain_interface_url.clone()).await,
         10,
-        "Loading attestors from blockchain interface"
-    );
+        "Loading attestors from blockchain interface",
+        0
+    ) {
+        Ok(attestors) => attestors,
+        Err(e) => {
+            panic!("Error getting attestors: {}", e);
+        }
+    };
     let protocol_wallet_attestors = generate_attestor_client(attestor_urls.clone()).await;
 
-    retry!(
+    match retry!(
         blockchain.blockchain.get_height().await,
         10,
-        "get blockchain height"
-    );
+        "Getting blockchain height",
+        0
+    ) {
+        Ok(height) => {
+            info!("Current blockchain height: {}", height);
+        }
+        Err(e) => {
+            panic!("Error getting blockchain height: {}", e);
+        }
+    }
 
     // Set up DLC store
     let dlc_store = Arc::new(AsyncStorageApiProvider::new(
@@ -374,8 +412,9 @@ async fn main() -> Result<(), GenericError> {
         let wallet = wallet.clone();
         let blockchain_interface_url = blockchain_interface_url.clone();
         let active_network = active_network.to_string();
+        let attestor_urls = attestor_urls.clone();
 
-        async {
+        async move {
             Ok::<_, GenericError>(service_fn(move |req| {
                 process_request(
                     req,
@@ -384,13 +423,14 @@ async fn main() -> Result<(), GenericError> {
                     wallet.to_owned(),
                     active_network.to_owned(),
                     blockchain_interface_url.to_owned(),
+                    attestor_urls.to_owned(),
                 )
             }))
         }
     });
 
     let addr = (
-        [0, 0, 0, 0],
+        wallet_ip,
         wallet_backend_port.parse().expect("Correct port value"),
     )
         .into();
@@ -560,10 +600,13 @@ async fn get_wallet_info(
 
     let mut collected_contracts: Vec<Vec<String>> = vec![vec![]; 9];
 
-    let contracts = store
-        .get_contracts()
-        .await
-        .expect("Error retrieving contract list.");
+    let contracts = match store.get_contracts().await {
+        Ok(contracts) => contracts,
+        Err(e) => {
+            error!("Error retrieving contract list: {}", e.to_string());
+            return build_error_response(e.to_string());
+        }
+    };
 
     for contract in contracts {
         let id = hex_str(&contract.get_id());
