@@ -173,14 +173,6 @@ impl JsDLCInterface {
             Arc::new(time_provider),
         )?;
 
-        match blockchain.refresh_chain_data(options.address.clone()).await {
-            Ok(_) => (),
-            Err(e) => {
-                log_to_console!("Error refreshing chain data: {}", e);
-            }
-        };
-        log_to_console!("options :{:?}", options);
-
         Ok(JsDLCInterface {
             options,
             manager,
@@ -194,30 +186,24 @@ impl JsDLCInterface {
     }
 
     pub async fn get_wallet_balance(&self) -> Result<u64, JsError> {
-        log_to_console!("get_wallet_balance");
-        match self
-            .blockchain
+        self.blockchain
             .refresh_chain_data(self.options.address.clone())
             .await
-        {
-            Ok(_) => (),
-            Err(e) => {
-                log_to_console!("Error refreshing chain data: {}", e);
-            }
-        };
-        match self.wallet.set_utxos(self.blockchain.get_utxos()?) {
-            Ok(_) => (),
-            Err(e) => {
-                log_to_console!("Error setting utxos: {}", e);
-            }
-        };
-        match self.blockchain.get_balance().await {
-            Ok(balance) => Ok(balance),
-            Err(e) => {
-                log_to_console!("Error getting balance: {}", e);
-                Ok(0)
-            }
-        }
+            .map_err(|_e| {
+                JsError::new(
+                    "Failed to communicate with the Bitcoin blockchain. Please try again later!",
+                )
+            })?;
+
+        self.wallet.set_utxos(
+            self.blockchain
+                .get_utxos()
+                .map_err(|_e| JsError::new("Failed to set UTXOs. Please try again later!"))?,
+        )?;
+
+        self.blockchain.get_balance().await.map_err(|_e| {
+            JsError::new("Failed to retrieve the Bitcoin balance. Please try again later!")
+        })
     }
 
     // public async function for fetching all the contracts on the manager
