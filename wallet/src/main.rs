@@ -10,6 +10,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{header, Body, Method, Response, Server, StatusCode};
 
 use bdk::descriptor;
+use secp256k1_zkp::SecretKey;
 use serde::{Deserialize, Serialize};
 use tokio::{task, time};
 
@@ -223,7 +224,9 @@ async fn process_request(
                     .iter()
                     .any(|url| !attestor_urls.contains(url))
                 {
-                    true => Err(WalletError(format!("Attestor not found in attestor list"))),
+                    true => Err(WalletError(
+                        "Attestor not found in attestor list".to_string(),
+                    )),
                     _ => Ok(()),
                 }?;
 
@@ -359,7 +362,7 @@ async fn main() -> Result<(), GenericError> {
         electrs_host.to_string(),
         active_network,
     ));
-    let (pubkey_ext, wallet) = setup_wallets(xpriv, active_network);
+    let (pubkey_ext, wallet, secret_key) = setup_wallets(xpriv, active_network);
 
     // Set up Attestor Clients
     let attestor_urls: Vec<String> = match retry!(
@@ -391,7 +394,8 @@ async fn main() -> Result<(), GenericError> {
 
     // Set up DLC store
     let dlc_store = Arc::new(AsyncStorageApiProvider::new(
-        pubkey_ext.to_string(),
+        pubkey_ext.to_pub().to_string(),
+        secret_key,
         storage_api_url,
     ));
 
@@ -462,7 +466,7 @@ where
 fn setup_wallets(
     xpriv: ExtendedPrivKey,
     active_network: bitcoin::Network,
-) -> (ExtendedPubKey, Arc<DlcWallet>) {
+) -> (ExtendedPubKey, Arc<DlcWallet>, SecretKey) {
     let secp = bitcoin::secp256k1::Secp256k1::new();
 
     let external_derivation_path =
@@ -494,7 +498,7 @@ fn setup_wallets(
     let wallet: Arc<DlcWallet> = Arc::new(DlcWallet::new(static_address.clone(), seckey_ext));
 
     let pubkey = ExtendedPubKey::from_priv(&secp, &derived_ext_xpriv);
-    (pubkey, wallet)
+    (pubkey, wallet, seckey_ext)
 }
 
 async fn create_new_offer(
@@ -506,18 +510,15 @@ async fn create_new_offer(
     offer_collateral: u64,
     total_outcomes: u64,
 ) -> Result<String, WalletError> {
-    let active_network = bitcoin::Network::from_str(&active_network).map_err(|e| {
-        WalletError(format!(
-            "Unknown Network in offer creation: {}",
-            e.to_string()
-        ))
-    })?;
+    let active_network = bitcoin::Network::from_str(&active_network)
+        .map_err(|e| WalletError(format!("Unknown Network in offer creation: {}", e)))?;
     let (_event_descriptor, descriptor) = get_numerical_contract_info(
         accept_collateral,
         offer_collateral,
         total_outcomes,
         attestors.len(),
-    );
+    )
+    .map_err(|e| WalletError(e.to_string()))?;
     info!(
         "Creating new offer with event id: {}, accept collateral: {}, offer_collateral: {}",
         event_id.clone(),

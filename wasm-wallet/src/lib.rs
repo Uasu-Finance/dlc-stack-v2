@@ -122,6 +122,7 @@ impl JsDLCInterface {
         address: String,
         network: String,
         electrs_url: String,
+        storage_api_url: String,
     ) -> Result<JsDLCInterface, JsError> {
         console_error_panic_hook::set_once();
 
@@ -150,10 +151,7 @@ impl JsDLCInterface {
             bitcoin::PublicKey::from_private_key(&secp, &PrivateKey::new(seckey, active_network));
 
         // Set up DLC store
-        let dlc_store = AsyncStorageApiProvider::new(
-            pubkey.to_string(),
-            "https://devnet.dlc.link/storage-api".to_string(),
-        );
+        let dlc_store = AsyncStorageApiProvider::new(pubkey.to_string(), seckey, storage_api_url);
 
         // Set up wallet
         let wallet = Arc::new(JSInterfaceWallet::new(

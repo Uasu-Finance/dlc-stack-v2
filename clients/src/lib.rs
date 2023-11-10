@@ -4,6 +4,10 @@ extern crate serde;
 
 use log::{debug, error};
 use reqwest::{Client, Response, StatusCode};
+use secp256k1_zkp::hashes::{sha256, Hash};
+use secp256k1_zkp::{ecdsa, Message, Secp256k1, SecretKey};
+
+use serde_json::{json, Value};
 use std::fmt::{Debug, Formatter};
 use std::time::Duration;
 use std::{error, fmt};
@@ -22,6 +26,13 @@ pub struct OfferRequest {
     pub accept_collateral: u64,
     pub offer_collateral: u64,
     pub total_outcomes: i32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+struct SignedMessage {
+    message: serde_json::Value,
+    public_key: String,
+    signature: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -102,6 +113,16 @@ pub struct ContractsRequestParams {
     pub key: String,
     pub uuid: Option<String>,
     pub state: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct SignedContractsRequestParams {
+    key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state: Option<String>,
+    signature: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -257,13 +278,65 @@ impl StorageApiClient {
         }
     }
 
+    async fn build_signed_message(
+        &self,
+        secret_key: SecretKey,
+        mut contract: Value,
+    ) -> Result<(String, SignedMessage), ApiError> {
+        let nonce = self.request_nonce().await?;
+        contract["nonce"] = nonce.clone().into();
+
+        let (sig, pub_key) = self.sign(secret_key, contract.to_string());
+        let message_body = SignedMessage {
+            message: contract,
+            public_key: pub_key.to_string(),
+            signature: sig.to_string(),
+        };
+        Ok((nonce, message_body))
+    }
+
+    fn sign(
+        &self,
+        secret_key: SecretKey,
+        message: String,
+    ) -> (ecdsa::Signature, secp256k1_zkp::PublicKey) {
+        let signer = Secp256k1::new();
+        let public_key = secret_key.public_key(&signer);
+        let digest = Message::from(sha256::Hash::hash(message.as_bytes()));
+        (signer.sign_ecdsa(&digest, &secret_key), public_key)
+    }
+
+    pub async fn request_nonce(&self) -> Result<String, ApiError> {
+        let uri = format!("{}/request_nonce", String::as_str(&self.host.clone()));
+        let res = self.client.get(uri).send().await?;
+        let nonce = res.text().await?;
+        Ok(nonce)
+    }
+
     pub async fn get_contracts(
         &self,
         contract_req: ContractsRequestParams,
+        secret_key: SecretKey,
     ) -> Result<Vec<Contract>, ApiError> {
         let uri = format!("{}/contracts", String::as_str(&self.host.clone()),);
-        debug!("getting contracts with request params: {:?}", contract_req);
-        let res = self.client.get(uri).query(&contract_req).send().await?;
+
+        let nonce = self.request_nonce().await?;
+
+        let (sig, _pubkey) = self.sign(secret_key, nonce.clone());
+        let signed_request_params = SignedContractsRequestParams {
+            key: contract_req.key.clone(),
+            uuid: contract_req.uuid.clone(),
+            state: contract_req.state.clone(),
+            signature: sig.to_string(),
+        };
+
+        let res = self
+            .client
+            .get(uri)
+            .header("authorization", nonce)
+            .query(&json!(signed_request_params))
+            .send()
+            .await?;
         let status = res.status().into();
         let contracts = res.json::<Vec<Contract>>().await.map_err(|e| ApiError {
             message: format!(
@@ -278,14 +351,18 @@ impl StorageApiClient {
     pub async fn get_contract(
         &self,
         contract_req: ContractRequestParams,
+        secret_key: SecretKey,
     ) -> Result<Option<Contract>, ApiError> {
         debug!("getting contract with uuid: {}", contract_req.uuid);
         let contract = self
-            .get_contracts(ContractsRequestParams {
-                uuid: Some(contract_req.uuid.clone()),
-                key: contract_req.key,
-                state: None,
-            })
+            .get_contracts(
+                ContractsRequestParams {
+                    uuid: Some(contract_req.uuid.clone()),
+                    key: contract_req.key,
+                    state: None,
+                },
+                secret_key,
+            )
             .await?;
         Ok(contract.first().cloned())
     }
@@ -319,10 +396,26 @@ impl StorageApiClient {
         Ok(events.first().cloned())
     }
 
-    pub async fn create_contract(&self, contract: NewContract) -> Result<Contract, ApiError> {
-        let uri = format!("{}/contracts", String::as_str(&self.host.clone()));
+    pub async fn create_contract(
+        &self,
+        contract: NewContract,
+        secret_key: SecretKey,
+    ) -> Result<Contract, ApiError> {
+        let uri: String = format!("{}/contracts", String::as_str(&self.host.clone()));
         debug!("calling contract create on url: {:?}", uri);
-        let res = self.client.post(uri).json(&contract).send().await?;
+
+        let (nonce, message_body) = self
+            .build_signed_message(secret_key, json!(contract))
+            .await?;
+
+        let res = self
+            .client
+            .post(uri)
+            .header("authorization", nonce)
+            .json(&json!(message_body))
+            .send()
+            .await?;
+
         let status = res.status().into();
         let contract = res.json::<Contract>().await.map_err(|e| ApiError {
             message: format!(
@@ -378,10 +471,23 @@ impl StorageApiClient {
         }
     }
 
-    pub async fn update_contract(&self, contract: UpdateContract) -> Result<(), ApiError> {
+    pub async fn update_contract(
+        &self,
+        contract: UpdateContract,
+        secret_key: SecretKey,
+    ) -> Result<(), ApiError> {
         let uri = format!("{}/contracts", String::as_str(&self.host.clone()));
         debug!("calling contract update on url: {:?}", uri);
-        let res = self.client.put(uri).json(&contract).send().await?;
+        let (nonce, message_body) = self
+            .build_signed_message(secret_key, json!(contract))
+            .await?;
+        let res = self
+            .client
+            .put(uri)
+            .header("authorization", nonce)
+            .json(&json!(message_body))
+            .send()
+            .await?;
         let status = res.status().into();
         match res
             .json::<EffectedNumResponse>()
@@ -437,10 +543,23 @@ impl StorageApiClient {
         }
     }
 
-    pub async fn delete_contract(&self, contract: ContractRequestParams) -> Result<(), ApiError> {
+    pub async fn delete_contract(
+        &self,
+        contract: ContractRequestParams,
+        secret_key: SecretKey,
+    ) -> Result<(), ApiError> {
         let uri = format!("{}/contract", String::as_str(&self.host.clone()));
         debug!("calling contract delete on url: {:?}", uri);
-        let res = self.client.delete(uri).json(&contract).send().await?;
+        let (nonce, message_body) = self
+            .build_signed_message(secret_key, json!(contract))
+            .await?;
+        let res = self
+            .client
+            .delete(uri)
+            .header("authorization", nonce)
+            .json(&json!(message_body))
+            .send()
+            .await?;
         let status = res.status().into();
         match res
             .json::<EffectedNumResponse>()
@@ -500,4 +619,101 @@ impl StorageApiClient {
     //         }
     //     }
     // }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::str::FromStr;
+
+    use crate::StorageApiClient;
+    use bdk::keys::bip39::{Language, Mnemonic, WordCount};
+    use bdk::keys::{DerivableKey, ExtendedKey, GeneratableKey, GeneratedKey};
+    use bdk::miniscript::Segwitv0;
+    use bitcoin::util::bip32::{ChildNumber, DerivationPath, ExtendedPubKey};
+    use secp256k1_zkp::ecdsa::Signature;
+    use serde_json::json;
+
+    #[actix_rt::test]
+    async fn test_build_signed_message() {
+        // Setup API Client
+        let mut server = mockito::Server::new();
+        let server_url = server.url();
+
+        server
+            .mock("GET", "/request_nonce")
+            .with_status(200)
+            .with_body("abcde")
+            .create_async()
+            .await;
+
+        let client = StorageApiClient::new(server_url);
+
+        // Create ExtendedPrivateKey
+        let secp = bitcoin::secp256k1::Secp256k1::new();
+        let mnemonic: GeneratedKey<_, Segwitv0> =
+            Mnemonic::generate((WordCount::Words24, Language::English))
+                .expect("should be able to generate mnemonic");
+        let mnemonic = mnemonic.into_key();
+
+        let xkey: ExtendedKey = (mnemonic.clone(), None)
+            .into_extended_key()
+            .expect("should be able to generate extended key");
+        let xpriv = xkey
+            .into_xprv(bitcoin::Network::Testnet)
+            .expect("should be able to generate extended private key");
+
+        let external_derivation_path = DerivationPath::from_str("m/44h/0h/0h/0")
+            .expect("should be able to parse derivation path");
+
+        let derived_xpriv = xpriv
+            .derive_priv(
+                &secp,
+                &external_derivation_path.extend([
+                    ChildNumber::Normal { index: 0 },
+                    ChildNumber::Normal { index: 0 },
+                ]),
+            )
+            .expect("should be able to derive private key");
+
+        let secret_key = derived_xpriv.private_key;
+        let public_key = ExtendedPubKey::from_priv(&secp, &derived_xpriv);
+
+        // Create contract without nonce
+        let expected_nonce: String = "abcde".to_string();
+
+        let contract_wo_nonce = json!({
+            "uuid": "123".to_string(),
+            "state": "123".to_string(),
+            "content": "123".to_string(),
+            "key": public_key.to_string(),
+        });
+
+        // Create contract with nonce
+        let mut contract_w_nonce = contract_wo_nonce.clone();
+        contract_w_nonce["nonce"] = expected_nonce.clone().into();
+
+        // Build signed message
+        let (nonce, signed_message) = client
+            .build_signed_message(secret_key, contract_wo_nonce)
+            .await
+            .expect("should be able to build signed message");
+
+        // Assert signed message
+        assert_eq!(signed_message.message, contract_w_nonce);
+
+        // Verify nonce and signature
+        assert_eq!(nonce, expected_nonce);
+        let digest = Message::from(sha256::Hash::hash(contract_w_nonce.to_string().as_bytes()));
+
+        assert!(secp
+            .verify_ecdsa(
+                &digest,
+                &Signature::from_str(&signed_message.signature)
+                    .expect("can make signature from string"),
+                &public_key.public_key
+            )
+            .is_ok());
+    }
 }

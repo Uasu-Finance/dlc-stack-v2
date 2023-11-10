@@ -1,12 +1,9 @@
+use crate::verify_sigs::AuthenticatedMessage;
 use crate::DbPool;
 use actix_web::web;
 use actix_web::web::{Data, Json, Path};
 use actix_web::{delete, get, post, put, HttpResponse, Responder};
-use dlc_storage_common::models::{
-    ContractRequestParams, DeleteContract, NewContract, UpdateContract,
-};
-use dlc_storage_reader;
-use dlc_storage_writer;
+use dlc_storage_common::models::ContractRequestParams;
 use log::{debug, warn};
 use serde_json::json;
 
@@ -28,12 +25,15 @@ pub async fn get_contracts(
 #[post("/contracts")]
 pub async fn create_contract(
     pool: Data<DbPool>,
-    contract_params: Json<NewContract>,
+    contract_params: Json<AuthenticatedMessage>,
 ) -> impl Responder {
     let mut conn = pool.get().expect("couldn't get db connection from pool");
-    match dlc_storage_writer::create_contract(&mut conn, contract_params.into_inner()) {
+    match dlc_storage_writer::create_contract(
+        &mut conn,
+        serde_json::from_str(&contract_params.into_inner().message.to_string()).expect("asdf"),
+    ) {
         Ok(contract) => {
-            debug!("Created contract: {:?}", contract);
+            debug!("Created contract: {:?}", contract.uuid);
             HttpResponse::Ok().json(contract)
         }
         Err(e) => {
@@ -46,17 +46,19 @@ pub async fn create_contract(
 #[put("/contracts")]
 pub async fn update_contract(
     pool: Data<DbPool>,
-    contract_params: Json<UpdateContract>,
+    contract_params: Json<AuthenticatedMessage>,
 ) -> impl Responder {
     let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let num_updated =
-        match dlc_storage_writer::update_contract(&mut conn, contract_params.into_inner()) {
-            Ok(num_updated) => num_updated,
-            Err(e) => {
-                warn!("Error updating contract: {:?}", e);
-                return HttpResponse::BadRequest().body(e.to_string());
-            }
-        };
+    let num_updated = match dlc_storage_writer::update_contract(
+        &mut conn,
+        serde_json::from_str(&contract_params.into_inner().message.to_string()).expect("asdf"),
+    ) {
+        Ok(num_updated) => num_updated,
+        Err(e) => {
+            warn!("Error updating contract: {:?}", e);
+            return HttpResponse::BadRequest().body(e.to_string());
+        }
+    };
     match num_updated {
         0 => HttpResponse::NotFound().body("No contract found"),
         _ => HttpResponse::Ok().json(json!({ "effected_num": num_updated })),
@@ -66,26 +68,30 @@ pub async fn update_contract(
 #[delete("/contract")]
 pub async fn delete_contract(
     pool: Data<DbPool>,
-    contract_params: Json<DeleteContract>,
+    contract_params: Json<AuthenticatedMessage>,
 ) -> impl Responder {
     let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let num_deleted =
-        match dlc_storage_writer::delete_contract(&mut conn, contract_params.into_inner()) {
-            Ok(num_deleted) => num_deleted,
-            Err(e) => {
-                warn!("Error deleting contract: {:?}", e);
-                return HttpResponse::BadRequest().body(e.to_string());
-            }
-        };
+    let num_deleted = match dlc_storage_writer::delete_contract(
+        &mut conn,
+        serde_json::from_str(&contract_params.into_inner().message.to_string()).expect("asdf"),
+    ) {
+        Ok(num_deleted) => num_deleted,
+        Err(e) => {
+            warn!("Error deleting contract: {:?}", e);
+            return HttpResponse::BadRequest().body(e.to_string());
+        }
+    };
     match num_deleted {
         0 => HttpResponse::NotFound().body("No contract found"),
         _ => HttpResponse::Ok().json(json!({ "effected_num": num_deleted })),
     }
 }
 
+//remove this?
 #[delete("/contracts/{ckey}")]
 pub async fn delete_contracts(pool: Data<DbPool>, ckey: Path<String>) -> impl Responder {
     let mut conn = pool.get().expect("couldn't get db connection from pool");
-    let num_deleted = dlc_storage_writer::delete_all_contracts(&mut conn, &ckey).unwrap();
+    let num_deleted = dlc_storage_writer::delete_all_contracts(&mut conn, &ckey)
+        .expect("couldn't delete contracts from db");
     HttpResponse::Ok().json(json!({ "effected_num": num_deleted }))
 }

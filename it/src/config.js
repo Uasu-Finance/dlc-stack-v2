@@ -15,6 +15,7 @@ const devnet = {
     'https://devnet.dlc.link/attestor-2',
     'https://devnet.dlc.link/attestor-3',
   ],
+  storageApiUrl: 'https://devnet.dlc.link/storage-api',
 };
 
 const testnet = {
@@ -30,6 +31,7 @@ const testnet = {
     'https://testnet.dlc.link/attestor-2',
     'https://testnet.dlc.link/attestor-3',
   ],
+  storageApiUrl: 'https://testnet.dlc.link/storage-api',
 };
 
 // Local services, but regtest bitcoin
@@ -40,6 +42,18 @@ const local = {
   bitcoinNetworkURL: 'https://devnet.dlc.link/electrs',
   protocolWalletURL: 'http://127.0.0.1:3003',
   attestorList: ['http://localhost:8801', 'http://localhost:8802', 'http://localhost:8803'],
+  storageApiUrl: 'http://127.0.0.1:8100',
+};
+
+// Local services with just script, but regtest bitcoin
+const local_just = {
+  testWalletPrivateKey: 'b5984262748203b2043923dd34202d1a6e05601af0c00e232d3b1988ce9608f5',
+  testWalletAddress: 'bcrt1qpnuck30uakpc0ffcmd3nwdd59y547qlzsmf34l',
+  bitcoinNetwork: 'regtest',
+  bitcoinNetworkURL: 'https://devnet.dlc.link/electrs',
+  protocolWalletURL: 'http://127.0.0.1:3003',
+  attestorList: ['http://127.0.0.1:8801', 'http://127.0.0.1:8802', 'http://127.0.0.1:8803'],
+  storageApiUrl: 'http://127.0.0.1:8100',
 };
 
 const docker = {
@@ -49,6 +63,7 @@ const docker = {
   bitcoinNetworkURL: 'https://devnet.dlc.link/electrs',
   protocolWalletURL: 'http://172.20.128.3:3003',
   attestorList: ['http://172.20.128.5:8801', 'http://172.20.128.6:8802', 'http://172.20.128.7:8803'],
+  storageApiUrl: 'http://172.20.128.1:8100',
 };
 
 const custom = {
@@ -58,12 +73,14 @@ const custom = {
   bitcoinNetworkURL: devnet.bitcoinNetworkURL,
   protocolWalletURL: local.protocolWalletURL,
   attestorList: devnet.attestorList,
+  storageApiUrl: devnet.storageApiUrl,
 };
 
 const config = {
   devnet,
   testnet,
   local,
+  local_just,
   docker,
   custom,
 };
