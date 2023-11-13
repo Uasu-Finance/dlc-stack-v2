@@ -3,7 +3,7 @@ use actix_web::web;
 use actix_web::web::{Data, Json, Path};
 use actix_web::{delete, get, post, put, HttpResponse, Responder};
 use dlc_storage_common::models::{DeleteEvent, EventRequestParams, NewEvent, UpdateEvent};
-use log::{debug, warn};
+use log::warn;
 use serde_json::json;
 
 #[get("/events")]
@@ -19,7 +19,6 @@ pub async fn get_events(
 
 #[post("/events")]
 pub async fn create_event(pool: Data<DbPool>, event: Json<NewEvent>) -> impl Responder {
-    debug!("POST: /events : {:?}", event.event_id);
     let mut conn = pool.get().expect("couldn't get db connection from pool");
     match dlc_storage_writer::create_event(&mut conn, event.into_inner()) {
         Ok(event) => HttpResponse::Ok().json(event),
