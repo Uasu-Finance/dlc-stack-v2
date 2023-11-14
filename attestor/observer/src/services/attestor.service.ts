@@ -7,16 +7,14 @@ import * as ecc from 'tiny-secp256k1';
 function getOrGenerateSecretFromConfig(): string {
   let secretKey: string;
   try {
-    secretKey = getEnv('XPRIV');
+    secretKey = getEnv('ATTESTOR_XPRIV');
   } catch (error) {
-    console.warn('No PRIVATE_KEY env var found, generating xpriv key');
+    console.warn('No ATTESTOR_XPRIV extended key env var found, generating xpriv key');
     const mnemonic = generateMnemonic();
     const seed = mnemonicToSeedSync(mnemonic);
     const bip32 = BIP32Factory(ecc);
     const node = bip32.fromSeed(seed);
     secretKey = node.toBase58();
-
-    console.log(mnemonic);
   }
   return secretKey;
 }
