@@ -65,10 +65,10 @@ export default async (config: ConfigSet): Promise<WrappedContract> => {
     ).connect(wallet);
 
     return {
-        setStatusFunded: async (uuid) => {
+        setStatusFunded: async (uuid, btcTxId) => {
             try {
-                const gasLimit = await contract.estimateGas.setStatusFunded(uuid);
-                const transaction = await contract.setStatusFunded(uuid, {
+                const gasLimit = await contract.estimateGas.setStatusFunded(uuid, btcTxId);
+                const transaction = await contract.setStatusFunded(uuid, btcTxId, {
                     gasLimit: gasLimit.add(10000),
                 });
                 const txReceipt = await transaction.wait();

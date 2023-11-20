@@ -87,8 +87,9 @@ export default async (config: ConfigSet): Promise<WrappedContract> => {
     const { network, deployer, api_base_extended } = await getNetworkInfo(config);
 
     return {
-        setStatusFunded: async (uuid) => {
+        setStatusFunded: async (uuid, btcTxId) => {
             try {
+                console.warn('btcTxId has been supplied, but it is not yet supported on Stacks Blockchain');
                 const cbPrincipal = await getCallbackContract(uuid, contractName, deployer, network);
 
                 const txOptions2: SignedContractCallOptions = {

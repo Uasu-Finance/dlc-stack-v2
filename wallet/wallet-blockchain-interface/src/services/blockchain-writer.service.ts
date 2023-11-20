@@ -42,9 +42,9 @@ export default class BlockchainWriterService {
         return BlockchainWriterService.contractConfig;
     }
 
-    public async setStatusFunded(uuid: string): Promise<TransactionReceipt | TxBroadcastResult> {
+    public async setStatusFunded(uuid: string, btcTxId: string): Promise<TransactionReceipt | TxBroadcastResult> {
         const contractConfig = await this.getWrappedContract();
-        return await contractConfig.setStatusFunded(uuid);
+        return await contractConfig.setStatusFunded(uuid, btcTxId);
     }
 
     public async postCloseDLC(uuid: string, btcTxId: string): Promise<TransactionReceipt | TxBroadcastResult> {

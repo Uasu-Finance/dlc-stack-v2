@@ -8,16 +8,20 @@ const TESTMODE: boolean = process.env.TEST_MODE_ENABLED === 'true';
 const JUSTMODE: boolean = process.env.JUST_MODE === 'true';
 
 router.post('/set-status-funded', express.json(), localhostOrDockerOnly, async (req, res) => {
-    console.log('POST /set-status-funded with UUID:', req.body.uuid);
+    console.log(`POST /set-status-funded with UUID: ${req.body.uuid} and BTC TX ID: ${req.body.btcTxId}`);
     if (!req.body.uuid) {
         res.status(400).send('Missing UUID');
+        return;
+    }
+    if (!req.body.btcTxId) {
+        res.status(400).send('Missing BTC TX ID');
         return;
     }
     if (TESTMODE || JUSTMODE) {
         res.status(200).send('set-status-funded called in test mode.');
         return;
     }
-    const data = await blockchainWriter.setStatusFunded(req.body.uuid as string);
+    const data = await blockchainWriter.setStatusFunded(req.body.uuid as string, req.body.btcTxId as string);
     res.status(200).send(data);
 });
 

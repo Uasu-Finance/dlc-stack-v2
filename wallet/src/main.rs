@@ -664,7 +664,7 @@ async fn periodic_check(
             vec![]
         }
     };
-    let mut newly_confirmed_uuids: Vec<String> = vec![];
+    let mut newly_confirmed_uuids: Vec<(String, bitcoin::Txid)> = vec![];
     let mut newly_closed_uuids: Vec<(String, bitcoin::Txid)> = vec![];
 
     for (id, uuid) in updated_contracts {
@@ -680,8 +680,9 @@ async fn periodic_check(
             }
         };
         match contract {
-            Contract::Confirmed(_c) => {
-                newly_confirmed_uuids.push(uuid);
+            Contract::Confirmed(c) => {
+                newly_confirmed_uuids
+                    .push((uuid, c.accepted_contract.dlc_transactions.fund.txid()));
             }
             Contract::PreClosed(c) => {
                 newly_closed_uuids.push((uuid, c.signed_cet.txid()));
@@ -699,12 +700,15 @@ async fn periodic_check(
         };
     }
 
-    for uuid in newly_confirmed_uuids {
-        debug!("Contract is funded, setting funded to true: {}", uuid);
+    for (uuid, txid) in newly_confirmed_uuids {
+        debug!(
+            "Contract is funded, setting funded to true: {}, btc tx id: {}",
+            uuid, txid
+        );
         reqwest::Client::new()
             .post(&funded_url)
             .timeout(REQWEST_TIMEOUT)
-            .json(&json!({ "uuid": uuid }))
+            .json(&json!({"uuid": uuid, "btcTxId": txid.to_string()}))
             .send()
             .await?;
     }
