@@ -7,8 +7,15 @@ import setupPolyfills from './polyfills.js';
 
 setupPolyfills();
 
-const { testWalletPrivateKey, testWalletAddress, bitcoinNetwork, bitcoinNetworkURL, protocolWalletURL, attestorList, storageApiUrl } =
-  config;
+const {
+  testWalletPrivateKey,
+  testWalletAddress,
+  bitcoinNetwork,
+  bitcoinNetworkURL,
+  protocolWalletURL,
+  attestorList,
+  storageApiUrl,
+} = config;
 
 const handleAttestors = process.env.HANDLE_ATTESTORS == 'true';
 const testUUID = process.env.UUID || `test${Math.floor(Math.random() * 1000)}`;
@@ -169,7 +176,7 @@ async function main() {
     testWalletAddress,
     bitcoinNetwork,
     bitcoinNetworkURL,
-    storageApiUrl,
+    storageApiUrl
   );
 
   //Checking Balance
@@ -239,8 +246,8 @@ async function main() {
           successfulAttesting
             ? acceptorGetsAllOutcome
             : index === offererGetsAllOutcome
-              ? offererGetsAllOutcome
-              : acceptorGetsAllOutcome
+            ? offererGetsAllOutcome
+            : acceptorGetsAllOutcome
         )
       )
     );
@@ -275,7 +282,16 @@ async function main() {
   });
 
   console.log('##############################################');
-  console.log('DLC Integration Test Completed Successfully :)');
+  console.log('DLC Integration Test Completed Successfully!');
+  console.log(
+    `███████╗██╗    ██╗███████╗███████╗████████╗
+██╔════╝██║    ██║██╔════╝██╔════╝╚══██╔══╝
+███████╗██║ █╗ ██║█████╗  █████╗     ██║
+╚════██║██║███╗██║██╔══╝  ██╔══╝     ██║
+███████║╚███╔███╔╝███████╗███████╗   ██║
+╚══════╝ ╚══╝╚══╝ ╚══════╝╚══════╝   ╚═╝
+`
+  );
   process.exit(0);
 }
 

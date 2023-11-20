@@ -15,6 +15,9 @@ run-storage:
 build-wasm:
   npm run build
 
+the-script:
+  ENV=local_just HANDLE_ATTESTORS=true npm start && wait
+
 alias it := run
 alias run-it := run
 alias doit := run
