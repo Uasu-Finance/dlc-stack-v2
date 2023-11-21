@@ -93,10 +93,10 @@ export default async (config: ConfigSet): Promise<WrappedContract> => {
                 return error;
             }
         },
-        getAllAttestors: async () => {
+        getDLCInfo: async (uuid) => {
             try {
-                const attestors = await contract.getAllAttestors();
-                return attestors;
+                const dlcInfo = await contract.getDLC(uuid);
+                return dlcInfo;
             } catch (error) {
                 console.log(error);
                 return error;

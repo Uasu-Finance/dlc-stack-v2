@@ -200,7 +200,6 @@ async fn process_request(
                 accept_collateral: u64,
                 offer_collateral: u64,
                 total_outcomes: u64,
-                attestor_list: String,
             }
             let result = async {
                 let whole_body = hyper::body::aggregate(req)
@@ -215,23 +214,8 @@ async fn process_request(
                         ))
                     })?;
 
-                let bitcoin_contract_attestor_urls: Vec<String> =
-                    serde_json::from_str(&req.attestor_list.clone()).map_err(|e| {
-                        WalletError(format!("Error deserializing attestor list: {}", e))
-                    })?;
-
-                match bitcoin_contract_attestor_urls
-                    .iter()
-                    .any(|url| !attestor_urls.contains(url))
-                {
-                    true => Err(WalletError(
-                        "Attestor not found in attestor list".to_string(),
-                    )),
-                    _ => Ok(()),
-                }?;
-
                 let bitcoin_contract_attestors: HashMap<XOnlyPublicKey, Arc<AttestorClient>> =
-                    generate_attestor_client(bitcoin_contract_attestor_urls.clone()).await;
+                    generate_attestor_client(attestor_urls.clone()).await;
 
                 create_new_offer(
                     manager,
