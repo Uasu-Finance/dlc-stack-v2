@@ -5,8 +5,8 @@
 #![deny(non_upper_case_globals)]
 #![deny(non_camel_case_types)]
 #![deny(non_snake_case)]
-#![deny(unused_mut)]
-#![deny(dead_code)]
+// #![deny(unused_mut)]
+// #![deny(dead_code)]
 #![deny(unused_imports)]
 // #![deny(missing_docs)]
 
@@ -16,21 +16,22 @@ extern crate dlc_messages;
 extern crate secp256k1_zkp;
 extern crate serde;
 
-use std::{fmt, io::Cursor, num::ParseIntError};
+use std::{fmt, io::Cursor, num::ParseIntError, time::Duration};
 
 use chrono::{DateTime, Utc};
 use dlc_link_manager::AsyncOracle;
 use dlc_manager::error::Error as DlcManagerError;
 use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
-use log::info;
+use log::{debug, info};
 use secp256k1_zkp::{schnorr::Signature, XOnlyPublicKey};
 use serde_json::Value;
 
+const REQWEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Enables interacting with a DLC oracle.
 pub struct AttestorClient {
     host: String,
     public_key: XOnlyPublicKey,
-    // client: reqwest::blocking::Client,
+    client: reqwest::Client,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -72,31 +73,6 @@ struct AttestationResponse {
     values: Vec<String>,
 }
 
-// fn get_object<T>(path: &str) -> Result<T, DlcManagerError>
-// where
-//     T: serde::de::DeserializeOwned,
-// {
-//     reqwest::blocking::get(path)
-//         .map_err(|x| {
-//             dlc_manager::error::Error::IOError(std::io::Error::new(std::io::ErrorKind::Other, x))
-//         })?
-//         .json::<T>()
-//         .map_err(|e| dlc_manager::error::Error::OracleError(e.to_string()))
-// }
-
-async fn get_json(path: &str) -> Result<Value, DlcManagerError> {
-    reqwest::get(path)
-        .await
-        .map_err(|x| {
-            dlc_manager::error::Error::IOError(std::io::Error::new(std::io::ErrorKind::Other, x))
-        })?
-        .json::<Value>()
-        .await
-        .map_err(|x| {
-            dlc_manager::error::Error::IOError(std::io::Error::new(std::io::ErrorKind::Other, x))
-        })
-}
-
 fn pubkey_path(host: &str) -> String {
     format!("{}{}", host, "publickey")
 }
@@ -115,7 +91,6 @@ impl AttestorClient {
     /// oracle uses an incompatible format.
     #[allow(dead_code)]
     pub async fn new(host: &str) -> Result<AttestorClient, DlcManagerError> {
-        let client = reqwest::Client::new();
         if host.is_empty() {
             return Err(DlcManagerError::InvalidParameters(
                 "Invalid host".to_string(),
@@ -129,6 +104,16 @@ impl AttestorClient {
         info!("Creating p2pd oracle client (by getting public key first) ...");
         let path = pubkey_path(&host);
         info!("Getting pubkey from {}", path);
+
+        let mut client_builder = reqwest::ClientBuilder::new();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            client_builder = client_builder.tcp_keepalive(Some(Duration::from_secs(20)));
+            client_builder = client_builder.timeout(REQWEST_TIMEOUT);
+        }
+        let client = client_builder
+            .build()
+            .expect("Attestor Client should be able to create a reqwest client");
 
         let attestor_key = client
             .get(path)
@@ -145,7 +130,22 @@ impl AttestorClient {
             .parse()
             .map_err(|_| DlcManagerError::OracleError("Oracle PubKey Error".to_string()))?;
         info!("The p2pd oracle client has been created successfully");
-        Ok(AttestorClient { host, public_key })
+        Ok(AttestorClient {
+            host,
+            public_key,
+            client,
+        })
+    }
+
+    async fn get_json(&self, path: &str) -> Result<Value, DlcManagerError> {
+        self.client
+            .get(path)
+            .send()
+            .await
+            .map_err(|x| dlc_manager::error::Error::OracleError(x.to_string()))?
+            .json::<Value>()
+            .await
+            .map_err(|x| dlc_manager::error::Error::OracleError(x.to_string()))
     }
 }
 
@@ -192,10 +192,10 @@ impl AsyncOracle for AttestorClient {
         &self,
         event_id: &str,
     ) -> Result<OracleAnnouncement, DlcManagerError> {
-        info!("Getting announcement for event_id {event_id}");
+        debug!("Getting announcement for event_id {event_id}");
         let path = announcement_path(&self.host, event_id);
-        info!("Getting announcement at URL {path}");
-        let v = match get_json(&path).await {
+        debug!("Getting announcement at URL {path}");
+        let v = match self.get_json(&path).await {
             Ok(v) => v,
             Err(e) => {
                 return Err(DlcManagerError::OracleError(format!(
@@ -234,7 +234,7 @@ impl AsyncOracle for AttestorClient {
         event_id: &str,
     ) -> Result<OracleAttestation, dlc_manager::error::Error> {
         let path = attestation_path(&self.host, event_id);
-        let v = get_json(&path).await?;
+        let v = self.get_json(&path).await?;
 
         //TODO: this next line might be None, throwing at unwrap, fix
         let encoded_hex_attestation = match v["rust_attestation"].as_str() {
@@ -256,7 +256,6 @@ impl AsyncOracle for AttestorClient {
             )
             .unwrap();
 
-        info!("GOT ATTESTATION as OBJECT! {:?}", decoded_attestation);
         Ok(decoded_attestation)
     }
 }

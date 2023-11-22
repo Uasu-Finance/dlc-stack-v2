@@ -1,6 +1,6 @@
 # Build and push docker image when not master, but was tagged with v[0-9]*
 
-name: Build docker
+name: Build & Push Docker on Tag
 
 on:
   push:
@@ -39,7 +39,7 @@ jobs:
           docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG
 
   build-attestor-public:
-    name: Build Attestor and Push to ECR Public on Tag
+    name: Build attestor and Push to ECR Public on Tag
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
@@ -69,7 +69,7 @@ jobs:
           docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG
 
   build-BI-public:
-    name: Build Blockchain Interface and Push to ECR Public on Tag
+    name: Build blockchain-interface and Push to ECR Public on Tag
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
@@ -95,11 +95,11 @@ jobs:
           ECR_REPOSITORY: dlc-blockchain-interface
           IMAGE_TAG: ${{ github.ref_name }}
         run: |
-          docker build -t $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG -f wallet-blockchain-interface/Dockerfile .
+          docker build -t $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG -f wallet/wallet-blockchain-interface/Dockerfile .
           docker push $ECR_PUBLIC_REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG
 
   build-wallet-public:
-    name: Build Protocol Wallet and Push to ECR Public on Tag
+    name: Build router-wallet and Push to ECR Public on Tag
     runs-on: ubuntu-latest
     steps:
       - name: Check out code

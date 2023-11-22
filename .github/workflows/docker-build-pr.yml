@@ -1,6 +1,6 @@
-# Build on PR to dev / master branch
+# Cargo and Integration Test on PR to dev / master branch
 
-name: Build & docker
+name: Tests on PR
 
 on:
   pull_request:
@@ -13,6 +13,19 @@ on:
       - synchronize
 
 jobs:
+  cargo-test:
+    name: Cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: setup toolchain
+        run: rustup override set nightly-2023-10-23
+      - name: build
+        run: cargo build
+      - name: test
+        run: cargo test
+
   build-storageapi:
     name: Build storage-api
     runs-on: ubuntu-latest
@@ -41,7 +54,7 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
   build-attestor:
-    name: Build Attestor
+    name: Build attestor
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
@@ -68,7 +81,7 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
   build-BI:
-    name: Build Blockchain Interface
+    name: Build blockchain-interface
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
@@ -91,11 +104,11 @@ jobs:
           ECR_REPOSITORY: dlc-blockchain-interface
           IMAGE_TAG: test-${{ steps.vars.outputs.sha_short }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f wallet-blockchain-interface/Dockerfile .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f wallet/wallet-blockchain-interface/Dockerfile .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
   build-wallet:
-    name: Build Protocol Wallet
+    name: Build router-wallet
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
@@ -183,7 +196,6 @@ jobs:
             exit_code=$(echo $status | awk '{print $2}' | tr -d '()')
 
             echo "Debug: status = $status"
-            echo "Debug: exit_code = $exit_code"
 
             if [[ "$status" =~ "Exited" ]]; then
               if [[ "$exit_code" == "0" ]]; then

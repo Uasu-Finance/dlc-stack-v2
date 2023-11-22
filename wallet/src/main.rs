@@ -1,31 +1,25 @@
-// #![deny(warnings)]
 #![feature(async_fn_in_trait)]
-#![allow(unreachable_code)]
+#![deny(clippy::unwrap_used)]
+#![deny(unused_mut)]
+#![deny(dead_code)]
 
 use bitcoin::util::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use bytes::Buf;
-use tokio::sync::oneshot;
 
 use hyper::service::{make_service_fn, service_fn};
-use hyper::Error;
 use hyper::{header, Body, Method, Response, Server, StatusCode};
-use tokio::{task, time};
-use url::form_urlencoded;
 
-use bdk::{descriptor, FeeRate, SyncOptions};
-use bdk::{SignOptions, Wallet as BdkWallet};
+use bdk::descriptor;
+use secp256k1_zkp::SecretKey;
 use serde::{Deserialize, Serialize};
+use tokio::{task, time};
 
 use core::panic;
-use std::{
-    collections::HashMap,
-    env,
-    str::FromStr,
-    sync::{Arc, Mutex},
-};
+use std::net::Ipv4Addr;
+use std::time::Duration;
+use std::{collections::HashMap, env, str::FromStr, sync::Arc};
 
-use bitcoin::{Address, XOnlyPublicKey};
-use dlc_bdk_wallet::DlcBdkWallet;
+use bitcoin::{PublicKey, XOnlyPublicKey};
 use dlc_link_manager::{AsyncOracle, AsyncStorage, Manager};
 use dlc_manager::{
     contract::{
@@ -35,7 +29,8 @@ use dlc_manager::{
     SystemTimeProvider,
 };
 use dlc_messages::{AcceptDlc, Message};
-use esplora_async_blockchain_provider::EsploraAsyncBlockchainProvider;
+use dlc_wallet::DlcWallet;
+use esplora_async_blockchain_provider_router_wallet::EsploraAsyncBlockchainProviderRouterWallet;
 use tracing::{debug, error, info, warn};
 
 use attestor_client::AttestorClient;
@@ -50,6 +45,7 @@ mod utils;
 mod macros;
 
 type GenericError = Box<dyn std::error::Error + Send + Sync>;
+// type Result<T> = std::result::Result<T, GenericError>;
 #[derive(Debug)]
 struct WalletError(String);
 impl fmt::Display for WalletError {
@@ -60,8 +56,8 @@ impl fmt::Display for WalletError {
 impl std::error::Error for WalletError {}
 static NOTFOUND: &[u8] = b"Not Found";
 type DlcManager<'a> = Manager<
-    Arc<DlcBdkWallet>,
-    Arc<EsploraAsyncBlockchainProvider>,
+    Arc<DlcWallet>,
+    Arc<EsploraAsyncBlockchainProviderRouterWallet>,
     Arc<AsyncStorageApiProvider>,
     Arc<AttestorClient>,
     Arc<SystemTimeProvider>,
@@ -70,6 +66,8 @@ type DlcManager<'a> = Manager<
 // The contracts in dlc-manager expect a node id, but web extensions often don't have this, so hardcode it for now. Should not have any ramifications.
 const STATIC_COUNTERPARTY_NODE_ID: &str =
     "02fc8e97419286cf05e5d133f41ff6d51f691dda039e9dc007245a421e2c7ec61c";
+
+const REQWEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,13 +95,9 @@ async fn get_attestors(
 ) -> Result<Vec<String>, dlc_manager::error::Error> {
     let get_all_attestors_endpoint_url = format!("{}/get-all-attestors", blockchain_interface_url);
 
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .build()
-        .map_err(to_oracle_error)?;
-
-    let res = client
+    let res = reqwest::Client::new()
         .get(get_all_attestors_endpoint_url.as_str())
+        .timeout(REQWEST_TIMEOUT)
         .send()
         .await
         .map_err(to_oracle_error)?;
@@ -124,50 +118,22 @@ async fn generate_attestor_client(
     let mut attestor_clients = HashMap::new();
 
     for url in attestor_urls.iter() {
-        let p2p_client: AttestorClient = retry!(
+        let p2p_client = match retry!(
             AttestorClient::new(url).await,
             10,
-            "attestor client creation"
-        );
+            "attestor client creation",
+            6
+        ) {
+            Ok(client) => client,
+            Err(e) => {
+                panic!("Error creating attestor client: {}", e);
+            }
+        };
         let attestor = Arc::new(p2p_client);
         attestor_clients.insert(attestor.get_public_key().await, attestor.clone());
     }
     attestor_clients
 }
-
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt::init();
-    let wallet_backend_port: String = env::var("WALLET_BACKEND_PORT").unwrap_or("8085".to_string());
-    let bitcoin_check_interval_seconds: u64 = env::var("BITCOIN_CHECK_INTERVAL_SECONDS")
-        .unwrap_or("10".to_string())
-        .parse::<u64>()
-        .unwrap_or(60);
-    let local = task::LocalSet::new();
-    local.spawn_local(async move {
-        let mut interval =
-            time::interval(time::Duration::from_secs(bitcoin_check_interval_seconds));
-        loop {
-            interval.tick().await;
-            match reqwest::get(format!(
-                "http://localhost:{}/periodic_check",
-                wallet_backend_port
-            ))
-            .await
-            {
-                Ok(_) => (),
-                Err(e) => {
-                    warn!("Error running periodic check: {}, will retry", e);
-                }
-            }
-        }
-    });
-    local.spawn_local(async move {
-        run().await;
-    });
-    local.await;
-}
-
 fn build_success_response(message: String) -> Result<Response<Body>, GenericError> {
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -175,8 +141,7 @@ fn build_success_response(message: String) -> Result<Response<Body>, GenericErro
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .header(header::ACCESS_CONTROL_ALLOW_METHODS, "*")
         .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
-        .body(Body::from(message.to_string()))
-        .unwrap())
+        .body(Body::from(message.to_string()))?)
 }
 
 fn build_error_response(message: String) -> Result<Response<Body>, GenericError> {
@@ -189,7 +154,7 @@ fn build_error_response(message: String) -> Result<Response<Body>, GenericError>
         .body(Body::from(
             json!(
                 {
-                    "status": 400,
+                    "status": StatusCode::BAD_REQUEST.as_u16(),
                     "errors": vec![ErrorResponse {
                         message: message.to_string(),
                         code: None,
@@ -200,30 +165,189 @@ fn build_error_response(message: String) -> Result<Response<Body>, GenericError>
         ))?)
 }
 
-async fn run() {
-    // Setup env vars
+async fn process_request(
+    req: hyper::Request<hyper::Body>,
+    manager: Arc<DlcManager<'_>>,
+    dlc_store: Arc<AsyncStorageApiProvider>,
+    wallet: Arc<DlcWallet>,
+    active_network: String,
+    blockchain_interface_url: String,
+    attestor_urls: Vec<String>,
+) -> Result<Response<Body>, GenericError> {
+    match (req.method(), req.uri().path()) {
+        (&Method::GET, "/health") => build_success_response(
+            json!({"data": [{"status": "healthy", "message": ""}]}).to_string(),
+        ),
+        (&Method::GET, "/info") => get_wallet_info(dlc_store, wallet).await,
+        (&Method::GET, "/periodic_check") => {
+            let result =
+                async { periodic_check(manager, dlc_store, blockchain_interface_url).await };
+            match result.await {
+                Ok(_) => (),
+                Err(e) => {
+                    warn!("Error periodic check: {}", e.to_string());
+                    return build_error_response(e.to_string());
+                }
+            };
+            build_success_response("Periodic check complete".to_string())
+        }
+        (&Method::OPTIONS, "/offer") => build_success_response("".to_string()),
+        (&Method::POST, "/offer") => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct OfferRequest {
+                uuid: String,
+                accept_collateral: u64,
+                offer_collateral: u64,
+                total_outcomes: u64,
+                attestor_list: String,
+            }
+            let result = async {
+                let whole_body = hyper::body::aggregate(req)
+                    .await
+                    .map_err(|e| WalletError(format!("Error aggregating body: {}", e)))?;
+
+                let req: OfferRequest =
+                    serde_json::from_reader(whole_body.reader()).map_err(|e| {
+                        WalletError(format!(
+                            "Error parsing http input to create Offer endpoint: {}",
+                            e
+                        ))
+                    })?;
+
+                let bitcoin_contract_attestor_urls: Vec<String> =
+                    serde_json::from_str(&req.attestor_list.clone()).map_err(|e| {
+                        WalletError(format!("Error deserializing attestor list: {}", e))
+                    })?;
+
+                match bitcoin_contract_attestor_urls
+                    .iter()
+                    .any(|url| !attestor_urls.contains(url))
+                {
+                    true => Err(WalletError(
+                        "Attestor not found in attestor list".to_string(),
+                    )),
+                    _ => Ok(()),
+                }?;
+
+                let bitcoin_contract_attestors: HashMap<XOnlyPublicKey, Arc<AttestorClient>> =
+                    generate_attestor_client(bitcoin_contract_attestor_urls.clone()).await;
+
+                create_new_offer(
+                    manager,
+                    bitcoin_contract_attestors,
+                    active_network,
+                    req.uuid,
+                    req.accept_collateral,
+                    req.offer_collateral,
+                    req.total_outcomes,
+                )
+                .await
+            };
+            match result.await {
+                Ok(offer_message) => build_success_response(offer_message),
+                Err(e) => {
+                    warn!("Error generating offer - {}", e);
+                    build_error_response(e.to_string())
+                }
+            }
+        }
+        (&Method::OPTIONS, "/offer/accept") => build_success_response("".to_string()),
+        (&Method::PUT, "/offer/accept") => {
+            info!("Accepting offer");
+            let result = async {
+                // Aggregate the body...
+                let whole_body = hyper::body::aggregate(req).await?;
+                // Decode as JSON...
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct AcceptOfferRequest {
+                    accept_message: String,
+                }
+                let data: AcceptOfferRequest = serde_json::from_reader(whole_body.reader())?;
+                let accept_dlc: AcceptDlc = serde_json::from_str(&data.accept_message)?;
+                accept_offer(accept_dlc, manager).await
+            };
+            match result.await {
+                Ok(sign_message) => build_success_response(sign_message),
+                Err(e) => {
+                    warn!("Error accepting offer - {}", e);
+                    build_error_response(e.to_string())
+                }
+            }
+        }
+        _ => {
+            // Return 404 not found response.
+            Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(NOTFOUND.into())?)
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), GenericError> {
+    tracing_subscriber::fmt::init();
+
     let wallet_backend_port: String = env::var("WALLET_BACKEND_PORT").unwrap_or("8085".to_string());
+    let wallet_ip: Ipv4Addr = env::var("WALLET_IP")
+        .unwrap_or("127.0.0.1".to_string())
+        .parse()
+        .unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
+    debug!("Wallet IP: {}", wallet_ip);
+
+    task::spawn(async {
+        let wallet_backend_port: String =
+            env::var("WALLET_BACKEND_PORT").unwrap_or("8085".to_string());
+        let wallet_ip: Ipv4Addr = env::var("WALLET_IP")
+            .unwrap_or("127.0.0.1".to_string())
+            .parse()
+            .unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
+        let bitcoin_check_interval_seconds: u64 = env::var("BITCOIN_CHECK_INTERVAL_SECONDS")
+            .unwrap_or("60".to_string())
+            .parse::<u64>()
+            .unwrap_or(60);
+        loop {
+            time::sleep(Duration::from_secs(bitcoin_check_interval_seconds)).await;
+            match reqwest::Client::new()
+                .get(format!(
+                    "http://{}:{}/periodic_check",
+                    wallet_ip, wallet_backend_port
+                ))
+                .timeout(REQWEST_TIMEOUT)
+                .send()
+                .await
+            {
+                Ok(_) => (),
+                Err(e) => {
+                    warn!("Error running periodic check: {}, will retry", e);
+                }
+            }
+        }
+    });
+
+    let blockchain_interface_url = env::var("BLOCKCHAIN_INTERFACE_URL")
+        .expect("BLOCKCHAIN_INTERFACE_URL environment variable not set, couldn't get attestors");
+    debug!("Blockchain interface url: {}", blockchain_interface_url);
     let xpriv_str = env::var("XPRIV")
-        .expect("XPRIV environment variable not set, please run `just generate-key`, securely backup the output, and set this env_var accordingly");
+    .expect("XPRIV environment variable not set, please run `just generate-key`, securely backup the output, and set this env_var accordingly");
     let xpriv = ExtendedPrivKey::from_str(&xpriv_str).expect("Unable to decode xpriv env variable");
     let fingerprint = env::var("FINGERPRINT")
-        .expect("FINGERPRINT environment variable not set, please run `just generate-key`, securely backup the output, and set this env_var accordingly");
+    .expect("FINGERPRINT environment variable not set, please run `just generate-key`, securely backup the output, and set this env_var accordingly");
     if fingerprint
         != xpriv
             .fingerprint(&bitcoin::secp256k1::Secp256k1::new())
             .to_string()
     {
         error!("Fingerprint does not match xpriv fingerprint! Please make sure you have the correct xpriv and fingerprint set in your env variables\n\nExiting...");
-        return;
+        return Err(GenericError::from("Fingerprint does not match xpriv fingerprint! Please make sure you have the correct xpriv and fingerprint set in your env variables\n\nExiting..."));
     }
-    let blockchain_interface_url = env::var("BLOCKCHAIN_INTERFACE_URL")
-        .expect("BLOCKCHAIN_INTERFACE_URL environment variable not set, couldn't get attestors");
+
     let storage_api_url = env::var("STORAGE_API_ENDPOINT")
         .expect("STORAGE_API_ENDPOINT environment variable not set");
-    let root_sled_path: String = env::var("SLED_WALLET_PATH").unwrap_or("wallet_db".to_string());
     let electrs_host =
         env::var("ELECTRUM_API_URL").expect("ELECTRUM_API_URL environment variable not set"); // Set up Blockchain Connection Object
-    let active_network = match env::var("BITCOIN_NETWORK").as_deref() {
+    let active_network: bitcoin::Network = match env::var("BITCOIN_NETWORK").as_deref() {
         Ok("bitcoin") => bitcoin::Network::Bitcoin,
         Ok("testnet") => bitcoin::Network::Testnet,
         Ok("signet") => bitcoin::Network::Signet,
@@ -233,256 +357,116 @@ async fn run() {
         ),
     };
 
-    // Setup DLC UUID state tracking
-    let funded_endpoint_url = format!("{}/set-status-funded", blockchain_interface_url);
-    let closed_endpoint_url = format!("{}/post-close-dlc", blockchain_interface_url);
-    let funded_uuids: Box<Vec<String>> = Box::default();
-    let closed_uuids: Box<Vec<String>> = Box::default();
-
-    // Set up wallet store
-    let sled_path = format!("{root_sled_path}_{active_network}_{fingerprint}");
-    let sled = sled::open(sled_path)
-        .unwrap()
-        .open_tree("default_tree")
-        .unwrap();
-
     // ELECTRUM / ELECTRS
-    let blockchain = Arc::new(EsploraAsyncBlockchainProvider::new(
+    let blockchain = Arc::new(EsploraAsyncBlockchainProviderRouterWallet::new(
         electrs_host.to_string(),
         active_network,
     ));
-    let (pubkey_ext, wallet) = setup_wallets(xpriv, active_network, sled);
-
-    // Do one initial sync of the wallet
-    refresh_wallet(blockchain.clone(), wallet.clone())
-        .await
-        .unwrap();
+    let (pubkey, wallet, secret_key) = setup_wallets(xpriv, active_network);
 
     // Set up Attestor Clients
-    let attestor_urls: Vec<String> = retry!(
+    let attestor_urls: Vec<String> = match retry!(
         get_attestors(blockchain_interface_url.clone()).await,
         10,
-        "Loading attestors from blockchain interface"
-    );
+        "Loading attestors from blockchain interface",
+        0
+    ) {
+        Ok(attestors) => attestors,
+        Err(e) => {
+            panic!("Error getting attestors: {}", e);
+        }
+    };
     let protocol_wallet_attestors = generate_attestor_client(attestor_urls.clone()).await;
 
-    retry!(
+    match retry!(
         blockchain.blockchain.get_height().await,
         10,
-        "get blockchain height"
-    );
+        "Getting blockchain height",
+        0
+    ) {
+        Ok(height) => {
+            info!("Current blockchain height: {}", height);
+        }
+        Err(e) => {
+            panic!("Error getting blockchain height: {}", e);
+        }
+    }
 
     // Set up DLC store
     let dlc_store = Arc::new(AsyncStorageApiProvider::new(
-        pubkey_ext.to_string(),
+        pubkey.to_string(),
+        secret_key,
         storage_api_url,
     ));
 
     // Set up time provider
     let time_provider = SystemTimeProvider {};
-    let manager = Arc::new(Mutex::new(
-        Manager::new(
-            Arc::clone(&wallet),
-            Arc::clone(&blockchain),
-            dlc_store.clone(),
-            protocol_wallet_attestors.clone(),
-            Arc::new(time_provider),
-            // Arc::clone(&blockchain),
-        )
-        .unwrap(),
-    ));
+    let manager = Arc::new(Manager::new(
+        Arc::clone(&wallet),
+        Arc::clone(&blockchain),
+        dlc_store.clone(),
+        Some(protocol_wallet_attestors),
+        Arc::new(time_provider),
+    )?);
 
-    let make_service = make_service_fn(move |_| {
+    let new_service = make_service_fn(move |_| {
         // For each connection, clone the counter to use in our service...
         let manager = manager.clone();
-        let blockchain = blockchain.clone();
         let dlc_store = dlc_store.clone();
         let wallet = wallet.clone();
-        let funded_endpoint_url = funded_endpoint_url.clone();
-        let funded_uuids = funded_uuids.clone();
-        let closed_endpoint_url = closed_endpoint_url.clone();
-        let closed_uuids = closed_uuids.clone();
+        let blockchain_interface_url = blockchain_interface_url.clone();
+        let active_network = active_network.to_string();
+        let attestor_urls = attestor_urls.clone();
 
         async move {
-            Ok::<_, Error>(service_fn(move |req| {
-                let manager = manager.clone();
-                let blockchain = blockchain.clone();
-                let dlc_store = dlc_store.clone();
-                let wallet = wallet.clone();
-                let funded_endpoint_url = funded_endpoint_url.clone();
-                let mut funded_uuids = funded_uuids.clone();
-                let closed_endpoint_url = closed_endpoint_url.clone();
-                let mut closed_uuids = closed_uuids.clone();
-                async move {
-                    match (req.method(), req.uri().path()) {
-                        (&Method::GET, "/empty_to_address") => {
-                            let result = async {
-                                let query = req.uri().query().ok_or(WalletError(
-                                    "Unable to find query on Request object".to_string(),
-                                ))?;
-                                let params = form_urlencoded::parse(query.as_bytes())
-                                    .into_owned()
-                                    .collect::<HashMap<String, String>>();
-                                let address = params.get("address").ok_or(WalletError(
-                                    "Unable to find address in query params".to_string(),
-                                ))?;
-                                empty_to_address(address, wallet, blockchain).await
-                            };
-                            match result.await {
-                                Ok(message) => build_success_response(message),
-                                Err(e) => {
-                                    warn!("Error emptying to address - {}", e);
-                                    build_error_response(e.to_string())
-                                }
-                            }
-                        }
-                        (&Method::GET, "/info") => get_wallet_info(dlc_store, wallet).await,
-                        (&Method::GET, "/periodic_check") => {
-                            let result = async {
-                                refresh_wallet(blockchain, wallet).await?;
-                                periodic_check(
-                                    manager,
-                                    dlc_store,
-                                    funded_endpoint_url,
-                                    &mut funded_uuids,
-                                    closed_endpoint_url,
-                                    &mut closed_uuids,
-                                )
-                                .await
-                            };
-                            match result.await {
-                                Ok(_) => (),
-                                Err(e) => {
-                                    warn!("Error periodic check: {}", e.to_string());
-                                    return build_error_response(e.to_string());
-                                }
-                            };
-                            build_success_response("Periodic check complete".to_string())
-                        }
-                        (&Method::OPTIONS, "/offer") => build_success_response("".to_string()),
-                        (&Method::POST, "/offer") => {
-                            #[derive(Deserialize)]
-                            #[serde(rename_all = "camelCase")]
-                            struct OfferRequest {
-                                uuid: String,
-                                accept_collateral: u64,
-                                offer_collateral: u64,
-                                total_outcomes: u64,
-                                attestor_list: String,
-                            }
-                            let result = async {
-                                let whole_body =
-                                    hyper::body::aggregate(req).await.map_err(|e| {
-                                        WalletError(format!("Error aggregating body: {}", e))
-                                    })?;
-
-                                let req: OfferRequest =
-                                    serde_json::from_reader(whole_body.reader()).unwrap();
-
-                                let bitcoin_contract_attestor_urls: Vec<String> =
-                                    serde_json::from_str(&req.attestor_list.clone()).map_err(
-                                        |e| {
-                                            WalletError(format!(
-                                                "Error deserializing attestor list: {}",
-                                                e
-                                            ))
-                                        },
-                                    )?;
-
-                                let bitcoin_contract_attestors: HashMap<
-                                    XOnlyPublicKey,
-                                    Arc<AttestorClient>,
-                                > = generate_attestor_client(
-                                    bitcoin_contract_attestor_urls.clone(),
-                                )
-                                .await;
-
-                                create_new_offer(
-                                    manager,
-                                    bitcoin_contract_attestors,
-                                    active_network,
-                                    req.uuid,
-                                    req.accept_collateral,
-                                    req.offer_collateral,
-                                    req.total_outcomes,
-                                )
-                                .await
-                            };
-                            match result.await {
-                                Ok(offer_message) => build_success_response(offer_message),
-                                Err(e) => {
-                                    warn!("Error generating offer - {}", e);
-                                    build_error_response(e.to_string())
-                                }
-                            }
-                        }
-                        (&Method::OPTIONS, "/offer/accept") => {
-                            build_success_response("".to_string())
-                        }
-                        (&Method::PUT, "/offer/accept") => {
-                            info!("Accepting offer");
-                            let result = async {
-                                // Aggregate the body...
-                                let whole_body = hyper::body::aggregate(req).await?;
-                                // Decode as JSON...
-                                #[derive(Deserialize)]
-                                #[serde(rename_all = "camelCase")]
-                                struct AcceptOfferRequest {
-                                    accept_message: String,
-                                }
-                                let data: AcceptOfferRequest =
-                                    serde_json::from_reader(whole_body.reader()).unwrap();
-                                let accept_dlc: AcceptDlc =
-                                    serde_json::from_str(&data.accept_message)?;
-                                accept_offer(accept_dlc, manager).await
-                            };
-                            match result.await {
-                                Ok(sign_message) => build_success_response(sign_message),
-                                Err(e) => {
-                                    warn!("Error accepting offer - {}", e);
-                                    build_error_response(e.to_string())
-                                }
-                            }
-                        }
-                        _ => {
-                            // Return 404 not found response.
-                            Ok(Response::builder()
-                                .status(StatusCode::NOT_FOUND)
-                                .body(NOTFOUND.into())
-                                .unwrap())
-                        }
-                    }
-                }
+            Ok::<_, GenericError>(service_fn(move |req| {
+                process_request(
+                    req,
+                    manager.to_owned(),
+                    dlc_store.to_owned(),
+                    wallet.to_owned(),
+                    active_network.to_owned(),
+                    blockchain_interface_url.to_owned(),
+                    attestor_urls.to_owned(),
+                )
             }))
         }
     });
 
     let addr = (
-        [0, 0, 0, 0],
+        wallet_ip,
         wallet_backend_port.parse().expect("Correct port value"),
     )
         .into();
 
-    let server = Server::bind(&addr).executor(LocalExec).serve(make_service);
-
-    let (_tx, rx) = oneshot::channel::<()>();
-    let server = server.with_graceful_shutdown(async move {
-        rx.await.ok();
-    });
+    let server = Server::bind(&addr).serve(new_service);
 
     warn!("Listening on http://{}", addr);
 
-    // The server would block on current thread to await !Send futures.
-    if let Err(e) = server.await {
-        panic!("server error: {}", e);
+    server.await?;
+
+    Ok(())
+}
+
+// Since the Server needs to spawn some background tasks, we needed
+// to configure an Executor that can spawn !Send futures...
+#[derive(Clone, Copy, Debug)]
+struct LocalExec;
+
+impl<F> hyper::rt::Executor<F> for LocalExec
+where
+    F: std::future::Future + 'static, // not requiring `Send`
+{
+    fn execute(&self, fut: F) {
+        // This will spawn into the currently running `LocalSet`.
+        tokio::task::spawn_local(fut);
     }
 }
 
 fn setup_wallets(
     xpriv: ExtendedPrivKey,
     active_network: bitcoin::Network,
-    sled: sled::Tree,
-) -> (ExtendedPubKey, Arc<DlcBdkWallet>) {
+) -> (PublicKey, Arc<DlcWallet>, SecretKey) {
     let secp = bitcoin::secp256k1::Secp256k1::new();
 
     let external_derivation_path =
@@ -496,11 +480,10 @@ fn setup_wallets(
 
     let x = signing_external_descriptor.0.clone();
 
-    let bdk_wallet = Arc::new(Mutex::new(
-        BdkWallet::new(signing_external_descriptor, None, active_network, sled).unwrap(),
-    ));
-
-    let static_address = x.at_derivation_index(0).address(active_network).unwrap();
+    let static_address = x
+        .at_derivation_index(0)
+        .address(active_network)
+        .expect("Should be able to calculate the static address");
     let derived_ext_xpriv = xpriv
         .derive_priv(
             &secp,
@@ -509,35 +492,33 @@ fn setup_wallets(
                 ChildNumber::Normal { index: 0 },
             ]),
         )
-        .unwrap();
+        .expect("Should be able to derive the private key path during wallet setup");
     let seckey_ext = derived_ext_xpriv.private_key;
 
-    let wallet: Arc<DlcBdkWallet> = Arc::new(DlcBdkWallet::new(
-        bdk_wallet,
-        static_address.clone(),
-        seckey_ext,
-        active_network,
-    ));
+    let wallet: Arc<DlcWallet> = Arc::new(DlcWallet::new(static_address.clone(), seckey_ext));
 
-    let pubkey = ExtendedPubKey::from_priv(&secp, &derived_ext_xpriv);
-    (pubkey, wallet)
+    let pubkey = ExtendedPubKey::from_priv(&secp, &derived_ext_xpriv).to_pub();
+    (pubkey, wallet, seckey_ext)
 }
 
 async fn create_new_offer(
-    manager: Arc<Mutex<DlcManager<'_>>>,
+    manager: Arc<DlcManager<'_>>,
     attestors: HashMap<XOnlyPublicKey, Arc<AttestorClient>>,
-    active_network: bitcoin::Network,
+    active_network: String,
     event_id: String,
     accept_collateral: u64,
     offer_collateral: u64,
     total_outcomes: u64,
 ) -> Result<String, WalletError> {
+    let active_network = bitcoin::Network::from_str(&active_network)
+        .map_err(|e| WalletError(format!("Unknown Network in offer creation: {}", e)))?;
     let (_event_descriptor, descriptor) = get_numerical_contract_info(
         accept_collateral,
         offer_collateral,
         total_outcomes,
         attestors.len(),
-    );
+    )
+    .map_err(|e| WalletError(e.to_string()))?;
     info!(
         "Creating new offer with event id: {}, accept collateral: {}, offer_collateral: {}",
         event_id.clone(),
@@ -569,12 +550,14 @@ async fn create_new_offer(
     };
 
     //had to make this mutable because of the borrow, not sure why
-    let mut man = manager.lock().unwrap();
+    let man = manager;
 
     let offer = man
         .send_offer(
             &contract_input,
-            STATIC_COUNTERPARTY_NODE_ID.parse().unwrap(),
+            STATIC_COUNTERPARTY_NODE_ID
+                .parse()
+                .expect("To be able to parse the static counterparty id to a pubkey"),
         )
         .await
         .map_err(|e| WalletError(e.to_string()))?;
@@ -583,14 +566,14 @@ async fn create_new_offer(
 
 async fn accept_offer(
     accept_dlc: AcceptDlc,
-    manager: Arc<Mutex<DlcManager<'_>>>,
+    manager: Arc<DlcManager<'_>>,
 ) -> Result<String, GenericError> {
     let dlc = manager
-        .lock()
-        .unwrap()
         .on_dlc_message(
             &Message::Accept(accept_dlc),
-            STATIC_COUNTERPARTY_NODE_ID.parse().unwrap(),
+            STATIC_COUNTERPARTY_NODE_ID
+                .parse()
+                .expect("To be able to parse the static counterparty id to a pubkey"),
         )
         .await?;
 
@@ -602,7 +585,7 @@ async fn accept_offer(
 
 async fn get_wallet_info(
     store: Arc<AsyncStorageApiProvider>,
-    wallet: Arc<DlcBdkWallet>,
+    wallet: Arc<DlcWallet>,
     // static_address: String,
 ) -> Result<Response<Body>, GenericError> {
     let mut info_response = json!({});
@@ -616,47 +599,26 @@ async fn get_wallet_info(
         res
     }
 
-    let mut collected_contracts: Vec<Vec<String>> = vec![
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-    ];
+    let mut collected_contracts: Vec<Vec<String>> = vec![vec![]; 9];
 
-    let contracts = store
-        .get_contracts()
-        .await
-        .expect("Error retrieving contract list.");
+    let contracts = match store.get_contracts().await {
+        Ok(contracts) => contracts,
+        Err(e) => {
+            error!("Error retrieving contract list: {}", e.to_string());
+            return build_error_response(e.to_string());
+        }
+    };
 
     for contract in contracts {
         let id = hex_str(&contract.get_id());
         match contract {
-            Contract::Offered(_) => {
-                collected_contracts[0].push(id);
-            }
-            Contract::Accepted(_) => {
-                collected_contracts[1].push(id);
-            }
-            Contract::Confirmed(_) => {
-                collected_contracts[2].push(id);
-            }
-            Contract::Signed(_) => {
-                collected_contracts[3].push(id);
-            }
-            Contract::Closed(_) => {
-                collected_contracts[4].push(id);
-            }
-            Contract::Refunded(_) => {
-                collected_contracts[5].push(id);
-            }
-            Contract::FailedAccept(_) | Contract::FailedSign(_) => {
-                collected_contracts[6].push(id);
-            }
+            Contract::Offered(_) => collected_contracts[0].push(id),
+            Contract::Accepted(_) => collected_contracts[1].push(id),
+            Contract::Confirmed(_) => collected_contracts[2].push(id),
+            Contract::Signed(_) => collected_contracts[3].push(id),
+            Contract::Closed(_) => collected_contracts[4].push(id),
+            Contract::Refunded(_) => collected_contracts[5].push(id),
+            Contract::FailedAccept(_) | Contract::FailedSign(_) => collected_contracts[6].push(id),
             Contract::Rejected(_) => collected_contracts[7].push(id),
             Contract::PreClosed(_) => collected_contracts[8].push(id),
         }
@@ -673,8 +635,6 @@ async fn get_wallet_info(
     contracts_json["PreClosed"] = collected_contracts[8].clone().into();
 
     info_response["wallet"] = json!({
-        "unconfirmed_balance": wallet.bdk_wallet.lock().unwrap().get_balance().unwrap().untrusted_pending,
-        "balance": wallet.bdk_wallet.lock().unwrap().get_balance().unwrap().confirmed,
         "address": wallet.address
     });
     info_response["contracts"] = contracts_json;
@@ -687,46 +647,17 @@ async fn get_wallet_info(
     Ok(response)
 }
 
-async fn refresh_wallet(
-    blockchain: Arc<EsploraAsyncBlockchainProvider>,
-    wallet: Arc<DlcBdkWallet>,
-) -> Result<(), WalletError> {
-    let bdk = match wallet.bdk_wallet.lock() {
-        Ok(wallet) => wallet,
-        Err(e) => {
-            error!("Error locking wallet: {}", e.to_string());
-            return Err(WalletError(e.to_string()));
-        }
-    };
-
-    bdk.sync(&blockchain.blockchain, SyncOptions::default())
-        .await
-        .map_err(|e| WalletError(e.to_string()))?;
-
-    debug!("BDK done syncing, now syncing blockchain");
-    blockchain
-        .refresh_chain_data(wallet.address.to_string())
-        .await
-        .map_err(|e| WalletError(e.to_string()))?;
-    debug!("done syncing blockchain data");
-    Ok(())
-}
-
 async fn periodic_check(
-    manager: Arc<Mutex<DlcManager<'_>>>,
+    manager: Arc<DlcManager<'_>>,
     store: Arc<AsyncStorageApiProvider>,
-    funded_url: String,
-    funded_uuids: &mut Vec<String>,
-    closed_url: String,
-    closed_uuids: &mut Vec<String>,
+    blockchain_interface_url: String,
 ) -> Result<String, GenericError> {
+    let funded_url = format!("{}/set-status-funded", blockchain_interface_url);
+    let closed_url = format!("{}/post-close-dlc", blockchain_interface_url);
+
     debug!("Running periodic_check");
 
-    // This should ideally not be done as a mutable ref as it could cause a runtime error
-    // when you have a reference to an object as mut and not mut at the same time
-    let mut man = manager.lock().unwrap();
-
-    let updated_contracts = match man.periodic_check().await {
+    let updated_contracts = match manager.periodic_check().await {
         Ok(updated_contracts) => updated_contracts,
         Err(e) => {
             info!("Error in periodic_check, will retry: {}", e.to_string());
@@ -748,94 +679,44 @@ async fn periodic_check(
                 continue;
             }
         };
-
         match contract {
             Contract::Confirmed(_c) => {
                 newly_confirmed_uuids.push(uuid);
             }
-            Contract::Closed(c) => {
-                newly_closed_uuids.push((uuid, c.signed_cet.unwrap().txid()));
+            Contract::PreClosed(c) => {
+                newly_closed_uuids.push((uuid, c.signed_cet.txid()));
+            }
+            Contract::Closed(_) | Contract::Signed(_) => {
+                debug!(
+                    "Contract is being set to the Closed or Signed state: {}",
+                    uuid
+                );
             }
             _ => error!(
-                "Error retrieving contract in periodic_check: {:?}, skipping",
-                id
+                "Error retrieving contract in periodic_check: {}, skipping",
+                uuid
             ),
         };
     }
 
     for uuid in newly_confirmed_uuids {
-        if !funded_uuids.contains(&uuid) {
-            debug!("Contract is funded, setting funded to true: {}", uuid);
-            reqwest::Client::new()
-                .post(&funded_url)
-                .json(&json!({ "uuid": uuid }))
-                .send()
-                .await?;
-        }
+        debug!("Contract is funded, setting funded to true: {}", uuid);
+        reqwest::Client::new()
+            .post(&funded_url)
+            .timeout(REQWEST_TIMEOUT)
+            .json(&json!({ "uuid": uuid }))
+            .send()
+            .await?;
     }
 
     for (uuid, txid) in newly_closed_uuids {
-        if !closed_uuids.contains(&uuid) {
-            debug!("Contract is closed, firing post-close url: {}", uuid);
-            reqwest::Client::new()
-                .post(&closed_url)
-                .json(&json!({"uuid": uuid, "btcTxId": txid.to_string()}))
-                .send()
-                .await?;
-        }
+        debug!("Contract is closed, firing post-close url: {}", uuid);
+        reqwest::Client::new()
+            .post(&closed_url)
+            .timeout(REQWEST_TIMEOUT)
+            .json(&json!({"uuid": uuid, "btcTxId": txid.to_string()}))
+            .send()
+            .await?;
     }
     Ok("Success running periodic check".to_string())
-}
-
-async fn empty_to_address(
-    address: &str,
-    wallet: Arc<DlcBdkWallet>,
-    blockchain: Arc<EsploraAsyncBlockchainProvider>,
-) -> Result<String, WalletError> {
-    let bdk = match wallet.bdk_wallet.lock() {
-        Ok(wallet) => wallet,
-        Err(e) => {
-            error!("Error locking wallet: {}", e.to_string());
-            return Err(WalletError(e.to_string()));
-        }
-    };
-
-    let to_address = Address::from_str(address).map_err(|e| WalletError(e.to_string()))?;
-    info!("draining wallet to address: {}", to_address);
-    let mut builder = bdk.build_tx();
-    builder
-        .drain_wallet()
-        .drain_to(to_address.script_pubkey())
-        .fee_rate(FeeRate::from_sat_per_vb(5.0))
-        .enable_rbf();
-    let (mut psbt, _details) = builder.finish().map_err(|e| WalletError(e.to_string()))?;
-
-    let _finalized = bdk
-        .sign(&mut psbt, SignOptions::default())
-        .map_err(|e| WalletError(e.to_string()))?;
-
-    // Broadcast the transaction
-    let raw_transaction = psbt.extract_tx();
-    let txid = raw_transaction.txid();
-
-    blockchain
-        .blockchain
-        .broadcast(&raw_transaction)
-        .await
-        .map_err(|e| WalletError(e.to_string()))?;
-    Ok(format!("Transaction broadcast successfully, TXID: {txid}"))
-}
-// Since the Server needs to spawn some background tasks, we needed
-// to configure an Executor that can spawn !Send futures...
-#[derive(Clone, Copy, Debug)]
-struct LocalExec;
-
-impl<F> hyper::rt::Executor<F> for LocalExec
-where
-    F: std::future::Future + 'static, // not requiring `Send`
-{
-    fn execute(&self, fut: F) {
-        // This will spawn into the currently running `LocalSet`.
-        tokio::task::spawn_local(fut);
-    }
 }

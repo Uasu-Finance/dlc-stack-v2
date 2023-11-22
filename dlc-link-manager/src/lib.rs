@@ -1,4 +1,7 @@
 #![feature(async_fn_in_trait)]
+#![deny(clippy::unwrap_used)]
+#![deny(unused_mut)]
+#![deny(dead_code)]
 //! #Manager a component to create and update DLCs.
 
 extern crate dlc_manager;
@@ -13,8 +16,7 @@ use crate::dlc_manager::contract_updater::{accept_contract, verify_accepted_and_
 use crate::dlc_manager::error::Error;
 use crate::dlc_manager::{Blockchain, Time, Wallet};
 
-use bitcoin::Address;
-use bitcoin::Transaction;
+use bitcoin::{Address, Transaction, Txid};
 
 use dlc_manager::ContractId;
 use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
@@ -75,16 +77,27 @@ pub trait AsyncStorage {
     async fn get_preclosed_contracts(&self) -> Result<Vec<PreClosedContract>, Error>;
 }
 
+pub trait AsyncBlockchain {
+    async fn get_transaction_confirmations_async(&self, txid: &bitcoin::Txid)
+        -> Result<u32, Error>;
+
+    async fn send_transaction_async(&self, tx: &Transaction) -> Result<(), Error>;
+
+    async fn get_network_async(&self) -> Result<bitcoin::Network, Error>;
+
+    async fn get_transaction_async(&self, tx_id: &Txid) -> Result<Transaction, Error>;
+}
+
 /// Used to create and update DLCs.
 pub struct Manager<W: Deref, B: Deref, S: Deref, O: Deref, T: Deref>
 where
     W::Target: Wallet,
-    B::Target: Blockchain,
+    B::Target: Blockchain + AsyncBlockchain,
     S::Target: AsyncStorage,
     O::Target: AsyncOracle,
     T::Target: Time,
 {
-    oracles: HashMap<XOnlyPublicKey, O>,
+    oracles: Option<HashMap<XOnlyPublicKey, O>>,
     wallet: W,
     blockchain: B,
     store: S,
@@ -138,7 +151,7 @@ macro_rules! get_contract_in_state {
 impl<W: Deref, B: Deref, S: Deref, O: Deref, T: Deref> Manager<W, B, S, O, T>
 where
     W::Target: Wallet,
-    B::Target: Blockchain,
+    B::Target: Blockchain + AsyncBlockchain,
     S::Target: AsyncStorage,
     O::Target: AsyncOracle,
     T::Target: Time,
@@ -148,7 +161,7 @@ where
         wallet: W,
         blockchain: B,
         store: S,
-        oracles: HashMap<XOnlyPublicKey, O>,
+        oracles: Option<HashMap<XOnlyPublicKey, O>>,
         time: T,
     ) -> Result<Self, Error> {
         Ok(Manager {
@@ -167,13 +180,13 @@ where
     }
 
     #[doc(hidden)]
-    pub fn get_mut_store(&mut self) -> &mut S {
-        &mut self.store
+    pub fn get_mut_store(&self) -> &S {
+        &self.store
     }
 
     /// Function called to pass a DlcMessage to the Manager.
     pub async fn on_dlc_message(
-        &mut self,
+        &self,
         msg: &DlcMessage,
         counter_party: PublicKey,
     ) -> Result<Option<DlcMessage>, Error> {
@@ -194,10 +207,20 @@ where
     /// Function called to create a new DLC. The offered contract will be stored
     /// and an OfferDlc message returned.
     pub async fn send_offer(
-        &mut self,
+        &self,
         contract_input: &ContractInput,
         counter_party: PublicKey,
     ) -> Result<OfferDlc, Error> {
+        let manager_oracles = match &self.oracles {
+            // Oracles is now an optional field, so check here before continuing.
+            Some(oracles) => oracles,
+            None => {
+                return Err(Error::InvalidParameters(
+                    "Manager instantiated without oracles, send_offer function not supported"
+                        .to_string(),
+                ));
+            }
+        };
         contract_input.validate()?;
 
         // let contract_infos = &contract_input.contract_infos;
@@ -205,27 +228,44 @@ where
         let event_id = &contract_input
             .contract_infos
             .first()
-            .unwrap()
+            .ok_or(Error::InvalidParameters(
+                "Contract Input Info missing".to_string(),
+            ))?
             .oracles
             .event_id;
+        debug!(
+            "manager_oracles keys {:?}",
+            manager_oracles
+                .keys()
+                .map(|k| k.to_string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        );
         let oracle_set: Vec<Vec<&O>> = contract_input
             .contract_infos
             .iter()
             .map(|x| {
+                debug!(
+                    "contract public keys: {}",
+                    x.oracles
+                        .public_keys
+                        .iter()
+                        .map(|k| k.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                );
                 x.oracles
                     .public_keys
                     .iter()
-                    .map(|pubkey| {
-                        self.oracles
-                            .get(pubkey)
-                            .ok_or_else(|| {
-                                Error::InvalidParameters("Unknown oracle public key".to_string())
-                            })
-                            .unwrap()
+                    .map(|pubkey| match manager_oracles.get(pubkey) {
+                        Some(x) => Ok(x),
+                        None => Err(Error::InvalidParameters(
+                            "Unknown oracle public key".to_string(),
+                        )),
                     })
-                    .collect::<Vec<&O>>()
+                    .collect::<Result<Vec<&O>, Error>>()
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<Vec<&O>>, Error>>()?;
 
         let mut oracle_announcements = Vec::new();
 
@@ -257,7 +297,7 @@ where
 
     /// Function to call to accept a DLC for which an offer was received.
     pub async fn accept_contract_offer(
-        &mut self,
+        &self,
         contract_id: &ContractId,
     ) -> Result<(ContractId, PublicKey, AcceptDlc), Error> {
         let offered_contract =
@@ -274,7 +314,7 @@ where
 
         self.wallet.import_address(&Address::p2wsh(
             &accepted_contract.dlc_transactions.funding_script_pubkey,
-            self.blockchain.get_network()?,
+            self.blockchain.get_network_async().await?,
         ))?;
 
         let contract_id = accepted_contract.get_contract_id();
@@ -286,17 +326,9 @@ where
         Ok((contract_id, counter_party, accept_msg))
     }
 
-    // pub async fn periodic_check(&mut self) -> Result<(), Error> {
-    //     self.check_signed_contracts().await?;
-    //     self.check_confirmed_contracts().await?;
-    //     self.check_preclosed_contracts().await?;
-
-    //     Ok(())
-    // }
-
     /// Function to call to check the state of the currently executing DLCs and
     /// update them if possible.
-    pub async fn periodic_check(&mut self) -> Result<Vec<(ContractId, String)>, Error> {
+    pub async fn periodic_check(&self) -> Result<Vec<(ContractId, String)>, Error> {
         let mut affected_contracts = Vec::<(ContractId, String)>::new();
         affected_contracts.extend_from_slice(&self.check_signed_contracts().await?);
         affected_contracts.extend_from_slice(&self.check_confirmed_contracts().await?);
@@ -306,7 +338,7 @@ where
     }
 
     async fn on_offer_message(
-        &mut self,
+        &self,
         offered_message: &OfferDlc,
         counter_party: PublicKey,
     ) -> Result<(), Error> {
@@ -327,7 +359,7 @@ where
     }
 
     async fn on_accept_message(
-        &mut self,
+        &self,
         accept_msg: &AcceptDlc,
         counter_party: &PublicKey,
     ) -> Result<DlcMessage, Error> {
@@ -357,7 +389,7 @@ where
                 .accepted_contract
                 .dlc_transactions
                 .funding_script_pubkey,
-            self.blockchain.get_network()?,
+            self.blockchain.get_network_async().await?,
         ))?;
 
         self.store
@@ -368,7 +400,7 @@ where
     }
 
     async fn on_sign_message(
-        &mut self,
+        &self,
         sign_message: &SignDlc,
         peer_id: &PublicKey,
     ) -> Result<(), Error> {
@@ -394,13 +426,13 @@ where
             .update_contract(&Contract::Signed(signed_contract))
             .await?;
 
-        self.blockchain.send_transaction(&fund_tx)?;
+        self.blockchain.send_transaction_async(&fund_tx).await?;
 
         Ok(())
     }
 
     async fn sign_fail_on_error<R>(
-        &mut self,
+        &self,
         accepted_contract: AcceptedContract,
         sign_message: SignDlc,
         e: Error,
@@ -417,7 +449,7 @@ where
     }
 
     async fn accept_fail_on_error<R>(
-        &mut self,
+        &self,
         offered_contract: OfferedContract,
         accept_message: AcceptDlc,
         e: Error,
@@ -433,10 +465,13 @@ where
         Err(e)
     }
 
-    async fn check_signed_contract(&mut self, contract: &SignedContract) -> Result<bool, Error> {
-        let confirmations = self.blockchain.get_transaction_confirmations(
-            &contract.accepted_contract.dlc_transactions.fund.txid(),
-        )?;
+    async fn check_signed_contract(&self, contract: &SignedContract) -> Result<bool, Error> {
+        let confirmations = self
+            .blockchain
+            .get_transaction_confirmations_async(
+                &contract.accepted_contract.dlc_transactions.fund.txid(),
+            )
+            .await?;
         if confirmations >= NB_CONFIRMATIONS {
             self.store
                 .update_contract(&Contract::Confirmed(contract.clone()))
@@ -446,24 +481,23 @@ where
         Ok(false)
     }
 
-    async fn check_signed_contracts(&mut self) -> Result<Vec<(ContractId, String)>, Error> {
+    async fn check_signed_contracts(&self) -> Result<Vec<(ContractId, String)>, Error> {
         let mut contracts_to_confirm = Vec::new();
         for c in self.store.get_signed_contracts().await? {
             match self.check_signed_contract(&c).await {
-                Ok(true) => contracts_to_confirm.push((
-                    c.accepted_contract.get_contract_id(),
-                    c.accepted_contract
+                Ok(true) => {
+                    let contract_id = c.accepted_contract.get_contract_id();
+                    let oracle_event_id = c
+                        .accepted_contract
                         .offered_contract
                         .contract_info
                         .get(0)
-                        .unwrap()
-                        .oracle_announcements
-                        .get(0)
-                        .unwrap()
-                        .oracle_event
-                        .event_id
-                        .clone(),
-                )),
+                        .and_then(|info| info.oracle_announcements.get(0))
+                        .map(|announcement| announcement.oracle_event.event_id.clone())
+                        .ok_or(Error::InvalidState("Missing oracle event ID".to_string()))?;
+
+                    contracts_to_confirm.push((contract_id, oracle_event_id));
+                }
                 Ok(false) => (),
                 Err(e) => error!(
                     "Error checking confirmed contract {}: {}",
@@ -476,7 +510,7 @@ where
         Ok(contracts_to_confirm)
     }
 
-    async fn check_confirmed_contracts(&mut self) -> Result<Vec<(ContractId, String)>, Error> {
+    async fn check_confirmed_contracts(&self) -> Result<Vec<(ContractId, String)>, Error> {
         let mut contracts_to_close = Vec::new();
         for c in self.store.get_confirmed_contracts().await? {
             // Confirmed contracts from channel are processed in channel specific methods.
@@ -491,20 +525,19 @@ where
                         e
                     )
                 }
-                Ok(true) => contracts_to_close.push((
-                    c.accepted_contract.get_contract_id(),
-                    c.accepted_contract
+                Ok(true) => {
+                    let contract_id = c.accepted_contract.get_contract_id();
+                    let oracle_event_id = c
+                        .accepted_contract
                         .offered_contract
                         .contract_info
                         .get(0)
-                        .unwrap()
-                        .oracle_announcements
-                        .get(0)
-                        .unwrap()
-                        .oracle_event
-                        .event_id
-                        .clone(),
-                )),
+                        .and_then(|info| info.oracle_announcements.get(0))
+                        .map(|announcement| announcement.oracle_event.event_id.clone())
+                        .ok_or(Error::InvalidState("Missing oracle event ID".to_string()))?;
+
+                    contracts_to_close.push((contract_id, oracle_event_id));
+                }
                 Ok(false) => (),
             }
         }
@@ -515,45 +548,68 @@ where
     async fn get_closable_contract_info<'a>(
         &'a self,
         contract: &'a SignedContract,
-    ) -> ClosableContractInfo<'a> {
+    ) -> Result<ClosableContractInfo<'a>, Error> {
+        let manager_oracles = match &self.oracles {
+            // Oracles is now an optional field, so check here before continuing.
+            Some(oracles) => oracles,
+            None => {
+                return Err(Error::InvalidParameters(
+                    "Manager instantiated without oracles, get_closable_contract_info function not supported"
+                        .to_string(),
+                ));
+            }
+        };
         let contract_infos = &contract.accepted_contract.offered_contract.contract_info;
         let adaptor_infos = &contract.accepted_contract.adaptor_infos;
         for (contract_info, adaptor_info) in contract_infos.iter().zip(adaptor_infos.iter()) {
-            let matured: Vec<_> = contract_info
+            let announcements: Vec<(usize, &OracleAnnouncement)> = contract_info
                 .oracle_announcements
                 .iter()
-                .filter(|x| {
-                    (x.oracle_event.event_maturity_epoch as u64) <= self.time.unix_time_now()
-                })
                 .enumerate()
                 .collect();
-            if matured.len() >= contract_info.threshold {
-                let attestations: Vec<_> =
-                    futures::future::join_all(matured.iter().filter_map(|(i, announcement)| {
-                        Some(async move {
-                            let oracle = self.oracles.get(&announcement.oracle_public_key).unwrap();
-                            (
-                                *i,
-                                oracle
-                                    .get_attestation(&announcement.oracle_event.event_id)
-                                    .await
-                                    .unwrap(), // .ok(),
-                            )
-                        })
-                    }))
-                    .await;
-                // .collect();
+
+            if announcements.len() >= contract_info.threshold {
+                let attestations: Vec<_> = futures::future::join_all(announcements.iter().map(
+                    |(i, announcement)| async move {
+                        let oracle = match manager_oracles.get(&announcement.oracle_public_key) {
+                            Some(x) => x,
+                            None => {
+                                return Err(Error::InvalidParameters(
+                                    "Unknown oracle public key".to_string(),
+                                ));
+                            }
+                        };
+
+                        let attestation = oracle
+                            .get_attestation(&announcement.oracle_event.event_id)
+                            .await
+                            .map_err(|err| Error::OracleError(err.to_string()))?;
+
+                        Ok((*i, attestation))
+                    },
+                ))
+                .await;
+                let attestations: Vec<_> = attestations
+                    .iter()
+                    .filter(|&pair| pair.is_ok())
+                    .flat_map(|pair| {
+                        pair.as_ref()
+                            .map(|(i, attestation)| (*i, attestation.clone()))
+                    })
+                    .collect();
+
                 if attestations.len() >= contract_info.threshold {
-                    return Some((contract_info, adaptor_info, attestations));
+                    return Ok(Some((contract_info, adaptor_info, attestations)));
                 }
             }
         }
-        None
+
+        Ok(None)
     }
 
-    async fn check_confirmed_contract(&mut self, contract: &SignedContract) -> Result<bool, Error> {
+    async fn check_confirmed_contract(&self, contract: &SignedContract) -> Result<bool, Error> {
         let closable_contract_info = self.get_closable_contract_info(contract).await;
-        if let Some((contract_info, adaptor_info, attestations)) = closable_contract_info {
+        if let Ok(Some((contract_info, adaptor_info, attestations))) = closable_contract_info {
             let cet = crate::dlc_manager::contract_updater::get_signed_cet(
                 &self.secp,
                 contract,
@@ -562,11 +618,14 @@ where
                 &attestations,
                 &self.wallet,
             )?;
-            match self.close_contract(
-                contract,
-                cet,
-                attestations.iter().map(|x| x.1.clone()).collect(),
-            ) {
+            match self
+                .close_contract(
+                    contract,
+                    cet,
+                    attestations.iter().map(|x| x.1.clone()).collect(),
+                )
+                .await
+            {
                 Ok(closed_contract) => {
                     self.store.update_contract(&closed_contract).await?;
                     return Ok(true);
@@ -586,25 +645,24 @@ where
         Ok(false)
     }
 
-    async fn check_preclosed_contracts(&mut self) -> Result<Vec<(ContractId, String)>, Error> {
+    async fn check_preclosed_contracts(&self) -> Result<Vec<(ContractId, String)>, Error> {
         let mut contracts_to_close = Vec::new();
         for c in self.store.get_preclosed_contracts().await? {
             match self.check_preclosed_contract(&c).await {
-                Ok(true) => contracts_to_close.push((
-                    c.signed_contract.accepted_contract.get_contract_id(),
-                    c.signed_contract
+                Ok(true) => {
+                    let contract_id = c.signed_contract.accepted_contract.get_contract_id();
+                    let oracle_event_id = c
+                        .signed_contract
                         .accepted_contract
                         .offered_contract
                         .contract_info
                         .get(0)
-                        .unwrap()
-                        .oracle_announcements
-                        .get(0)
-                        .unwrap()
-                        .oracle_event
-                        .event_id
-                        .clone(),
-                )),
+                        .and_then(|info| info.oracle_announcements.get(0))
+                        .map(|announcement| announcement.oracle_event.event_id.clone())
+                        .ok_or(Error::InvalidState("Missing oracle event ID".to_string()))?;
+
+                    contracts_to_close.push((contract_id, oracle_event_id));
+                }
                 Ok(false) => (),
                 Err(e) => error!(
                     "Error checking pre-closed contract {}: {}",
@@ -617,14 +675,12 @@ where
         Ok(contracts_to_close)
     }
 
-    async fn check_preclosed_contract(
-        &mut self,
-        contract: &PreClosedContract,
-    ) -> Result<bool, Error> {
+    async fn check_preclosed_contract(&self, contract: &PreClosedContract) -> Result<bool, Error> {
         let broadcasted_txid = contract.signed_cet.txid();
         let confirmations = self
             .blockchain
-            .get_transaction_confirmations(&broadcasted_txid)?;
+            .get_transaction_confirmations_async(&broadcasted_txid)
+            .await?;
         if confirmations >= NB_CONFIRMATIONS {
             let closed_contract = ClosedContract {
                 attestations: contract.attestations.clone(),
@@ -654,15 +710,16 @@ where
         Ok(false)
     }
 
-    fn close_contract(
-        &mut self,
+    async fn close_contract(
+        &self,
         contract: &SignedContract,
         signed_cet: Transaction,
         attestations: Vec<OracleAttestation>,
     ) -> Result<Contract, Error> {
         let confirmations = self
             .blockchain
-            .get_transaction_confirmations(&signed_cet.txid())?;
+            .get_transaction_confirmations_async(&signed_cet.txid())
+            .await?;
 
         // Put it here for post-close, and here's the btc txid too.
         // But perhaps we'd rather have it in the final close place, and
@@ -673,7 +730,7 @@ where
             // mempool or blockchain, we might have been cheated. There is
             // not much to be done apart from possibly extracting a fraud
             // proof but ideally it should be handled.
-            self.blockchain.send_transaction(&signed_cet)?;
+            self.blockchain.send_transaction_async(&signed_cet).await?;
 
             let preclosed_contract = PreClosedContract {
                 signed_contract: contract.clone(),
@@ -704,7 +761,7 @@ where
         Ok(Contract::Closed(closed_contract))
     }
 
-    async fn check_refund(&mut self, contract: &SignedContract) -> Result<(), Error> {
+    async fn check_refund(&self, contract: &SignedContract) -> Result<(), Error> {
         // TODO(tibo): should check for confirmation of refund before updating state
         if contract
             .accepted_contract
@@ -718,14 +775,15 @@ where
             let refund = accepted_contract.dlc_transactions.refund.clone();
             let confirmations = self
                 .blockchain
-                .get_transaction_confirmations(&refund.txid())?;
+                .get_transaction_confirmations_async(&refund.txid())
+                .await?;
             if confirmations == 0 {
                 let refund = crate::dlc_manager::contract_updater::get_signed_refund(
                     &self.secp,
                     contract,
                     &self.wallet,
                 )?;
-                self.blockchain.send_transaction(&refund)?;
+                self.blockchain.send_transaction_async(&refund).await?;
             }
 
             self.store

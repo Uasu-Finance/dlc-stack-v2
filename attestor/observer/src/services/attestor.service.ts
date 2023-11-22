@@ -1,36 +1,38 @@
 import { Attestor } from 'attestor';
 import { getEnv } from '../config/read-env-configs.js';
-import { createECDH } from 'crypto';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { generateMnemonic, mnemonicToSeedSync } from 'bip39';
+import { BIP32Factory } from 'bip32';
+import * as ecc from 'tiny-secp256k1';
 
 function getOrGenerateSecretFromConfig(): string {
   let secretKey: string;
   try {
-    secretKey = getEnv('PRIVATE_KEY');
+    secretKey = getEnv('ATTESTOR_XPRIV');
   } catch (error) {
-    console.warn('No PRIVATE_KEY env var found, generating secret key');
-    const ecdh = createECDH('secp256k1');
-    ecdh.generateKeys();
-    secretKey = ecdh.getPrivateKey('hex');
+    console.warn('No ATTESTOR_XPRIV extended key env var found, generating xpriv key');
+    const mnemonic = generateMnemonic();
+    const seed = mnemonicToSeedSync(mnemonic);
+    const bip32 = BIP32Factory(ecc);
+    const node = bip32.fromSeed(seed);
+    secretKey = node.toBase58();
   }
   return secretKey;
 }
 
 function createMaturationDate() {
   const maturationDate = new Date();
-  maturationDate.setMinutes(maturationDate.getMinutes() + 3);
+  maturationDate.setMonth(maturationDate.getMonth() + 3);
   return maturationDate.toISOString();
 }
 
 export default class AttestorService {
   private static attestor: Attestor;
 
-  private constructor() {}
+  private constructor() { }
 
   public static async getAttestor(): Promise<Attestor> {
     if (!this.attestor) {
       this.attestor = await Attestor.new(
-        getEnv('STORAGE_API_ENABLED') === 'true',
         getEnv('STORAGE_API_ENDPOINT'),
         getOrGenerateSecretFromConfig()
       );
@@ -44,12 +46,31 @@ export default class AttestorService {
     await this.getAttestor();
   }
 
+  public static async getHealth() {
+    try {
+      let health_response: any[] = [];
+      const health = await Attestor.get_health();
+      health.get('data').forEach((element: Iterable<readonly [PropertyKey, any]>) => {
+        health_response.push(Object.fromEntries(element));
+      });
+      return JSON.stringify({ 'data': health_response });
+    } catch (error) {
+      console.error(error);
+      return error;
+    }
+  }
+
   public static async createAnnouncement(uuid: string, maturation?: string) {
     const attestor = await this.getAttestor();
 
     let _maturation = maturation ? new Date(maturation).toISOString() : createMaturationDate();
 
-    await attestor.create_event(uuid, _maturation);
+    try {
+      await attestor.create_event(uuid, _maturation);
+    } catch (error) {
+      console.error(error);
+      return error;
+    }
     return { uuid: uuid, maturation: _maturation };
   }
 

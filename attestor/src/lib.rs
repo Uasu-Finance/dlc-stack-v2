@@ -1,6 +1,8 @@
 extern crate core;
 extern crate log;
 use ::hex::ToHex;
+use bitcoin::util::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
+use serde_json::json;
 use wasm_bindgen::prelude::*;
 
 use lightning::util::ser::{Readable, Writeable};
@@ -41,34 +43,40 @@ macro_rules! clog {
 #[wasm_bindgen]
 pub struct Attestor {
     oracle: Oracle,
+    secret_key: SecretKey,
 }
 
 #[wasm_bindgen]
 impl Attestor {
-    pub async fn new(
-        storage_api_enabled: bool,
-        storage_api_endpoint: String,
-        secret_key: String,
-    ) -> Attestor {
+    pub async fn new(storage_api_endpoint: String, x_secret_key_str: String) -> Attestor {
         clog!(
-            "[WASM-ATTESTOR]: Creating new attestor with storage_api_enabled: {}, storage_api_endpoint: {}, secret_key: {:?}",
-            storage_api_enabled,
-            storage_api_endpoint,
-            secret_key
+            "[WASM-ATTESTOR]: Creating new attestor with storage_api_endpoint: {}",
+            storage_api_endpoint
         );
-
         let secp = Secp256k1::new();
-        let key = match SecretKey::from_str(&secret_key) {
-            Ok(key) => key,
-            Err(_) => {
-                clog!("[WASM-ATTESTOR] Invalid secret key provided, shutting down");
-                panic!("Invalid secret key provided");
-            }
-        };
-        let key_pair = KeyPair::from_secret_key(&secp, &key);
-        let oracle =
-            Oracle::new(key_pair, secp, storage_api_enabled, storage_api_endpoint).unwrap();
-        Attestor { oracle }
+        let xpriv_key = ExtendedPrivKey::from_str(&x_secret_key_str)
+            .expect("Unable to decode xpriv env variable");
+        let external_derivation_path =
+            DerivationPath::from_str("m/44h/0h/0h/0").expect("A valid derivation path");
+        let derived_ext_xpriv = xpriv_key
+            .derive_priv(
+                &secp,
+                &external_derivation_path.extend([
+                    ChildNumber::Normal { index: 0 },
+                    ChildNumber::Normal { index: 0 },
+                ]),
+            )
+            .expect("Should be able to derive the private key path during wallet setup");
+        let secret_key = derived_ext_xpriv.private_key;
+        let key_pair = KeyPair::from_secret_key(&secp, &secret_key);
+        let oracle = Oracle::new(key_pair, secp, storage_api_endpoint).unwrap();
+        Attestor { oracle, secret_key }
+    }
+
+    pub async fn get_health() -> Result<JsValue, JsValue> {
+        Ok(serde_wasm_bindgen::to_value(&json!({"data": [
+            {"status": "healthy", "message": ""}
+        ]}))?)
     }
 
     pub async fn create_event(&self, uuid: &str, maturation: &str) -> Result<(), JsValue> {
@@ -105,8 +113,7 @@ impl Attestor {
             .event_handler
             .storage_api
             .clone()
-            .unwrap()
-            .insert(uuid.to_string(), new_event.clone())
+            .insert(uuid.to_string(), new_event.clone(), self.secret_key)
             .await
         {
             Ok(Some(_val)) => Ok(()),
@@ -128,9 +135,7 @@ impl Attestor {
             .oracle
             .event_handler
             .storage_api
-            .as_ref()
-            .expect("Storage API connection to initialize properly")
-            .get(uuid.clone())
+            .get(uuid.clone(), self.secret_key)
             .await
         {
             Ok(val) => val,
@@ -153,7 +158,6 @@ impl Attestor {
             }
         };
         event = serde_json::from_str(&String::from_utf8_lossy(&event_vec)).unwrap();
-        clog!("[WASM-ATTESTOR] Got event from StorageAPI: {:?}", event);
 
         let outstanding_sk_nonces = event.clone().0.unwrap();
 
@@ -192,9 +196,7 @@ impl Attestor {
             .oracle
             .event_handler
             .storage_api
-            .as_ref()
-            .expect("Storage API connection to initialize properly")
-            .insert(uuid.clone(), new_event.clone())
+            .insert(uuid.clone(), new_event.clone(), self.secret_key)
             .await
         {
             Ok(val) => val,
@@ -213,7 +215,6 @@ impl Attestor {
                     "[WASM-ATTESTOR] Event was unable to update in StorageAPI with uuid: {}",
                     uuid
                 );
-                // panic!();
                 None
             }
         };
@@ -225,8 +226,7 @@ impl Attestor {
             .event_handler
             .storage_api
             .clone()
-            .unwrap()
-            .get_all()
+            .get_all(self.secret_key)
             .await
             .unwrap()
             .unwrap();
@@ -245,22 +245,20 @@ impl Attestor {
             .event_handler
             .storage_api
             .clone()
-            .unwrap()
-            .get(uuid)
+            .get(uuid, self.secret_key)
             .await
             .unwrap();
 
         match result {
-            Some(event) => {
-                serde_wasm_bindgen::to_value(&parse_database_entry(event)).unwrap()
-            }
+            Some(event) => serde_wasm_bindgen::to_value(&parse_database_entry(event)).unwrap(),
             None => JsValue::NULL,
         }
     }
 
     pub async fn get_pubkey(&self) -> String {
-        let pubkey = SchnorrPublicKey::from_keypair(&self.oracle.key_pair).0;
-        pubkey.to_string()
+        SchnorrPublicKey::from_keypair(&self.oracle.key_pair)
+            .0
+            .to_string()
     }
 }
 
