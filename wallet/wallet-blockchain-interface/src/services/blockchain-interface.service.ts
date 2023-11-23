@@ -24,6 +24,7 @@ export default class BlockchainInterfaceService {
             case 'ETH_SEPOLIA':
             case 'ETH_GOERLI':
             case 'ETH_LOCAL':
+            case 'OKX_TESTNET':
                 return await getETHConfig(configSet);
             case 'STACKS_MAINNET':
             case 'STACKS_TESTNET':

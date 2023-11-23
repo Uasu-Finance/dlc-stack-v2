@@ -6,7 +6,7 @@ import fs from 'fs';
 import { WrappedContract } from '../shared/models/wrapped-contract.interface.js';
 
 async function fetchDeploymentInfo(subchain: string, version: string, branch: string): Promise<DeploymentInfo> {
-    const contract = 'DlcManager';
+    const contract = 'DLCManager';
     try {
         const response = await fetch(
             `https://raw.githubusercontent.com/DLC-link/dlc-solidity/${branch}/deploymentFiles/${subchain}/v${version}/${contract}.json`
@@ -51,6 +51,11 @@ export default async (config: ConfigSet): Promise<WrappedContract> => {
         case 'ETH_LOCAL':
             deploymentInfo = await getLocalDeploymentInfo('./deploymentFiles/localhost', 'DlcManager', config.version); // TODO:
             provider = new ethers.providers.JsonRpcProvider(`http://127.0.0.1:8545`);
+            wallet = new ethers.Wallet(config.privateKey, provider);
+            break;
+        case 'OKX_TESTNET':
+            deploymentInfo = await fetchDeploymentInfo('X1test', config.version, config.branch);
+            provider = new ethers.providers.JsonRpcProvider(`https://x1testrpc.okx.com/`);
             wallet = new ethers.Wallet(config.privateKey, provider);
             break;
         default:
