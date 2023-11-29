@@ -2,6 +2,8 @@ import express from 'express';
 import dotenv from 'dotenv';
 dotenv.config();
 import AttestorService from '../services/attestor.service.js';
+import ConfigService from '../services/config.service.js';
+import chalk from 'chalk';
 
 const router = express.Router();
 
@@ -32,7 +34,8 @@ router.get('/publickey', async (req, res) => {
   res.status(200).send(data);
 });
 
-if (process.env.DEV_ENDPOINTS_ENABLED === 'true') {
+if (ConfigService.getSettings()['dev-endpoints-enabled']) {
+  console.log(chalk.bgYellow('Dev endpoints enabled!'));
   router.get('/create-announcement/:uuid', async (req, res) => {
     console.log('GET /create-announcement with url, params and query: ', req.url, req.params, req.query);
     let time;

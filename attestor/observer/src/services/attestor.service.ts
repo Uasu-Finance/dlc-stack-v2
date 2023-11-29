@@ -1,13 +1,13 @@
 import { Attestor } from 'attestor';
-import { getEnv } from '../config/read-env-configs.js';
 import { generateMnemonic, mnemonicToSeedSync } from 'bip39';
 import { BIP32Factory } from 'bip32';
 import * as ecc from 'tiny-secp256k1';
+import ConfigService from './config.service.js';
 
 function getOrGenerateSecretFromConfig(): string {
   let secretKey: string;
   try {
-    secretKey = getEnv('ATTESTOR_XPRIV');
+    secretKey = ConfigService.getEnv('ATTESTOR_XPRIV');
   } catch (error) {
     console.warn('No ATTESTOR_XPRIV extended key env var found, generating xpriv key');
     const mnemonic = generateMnemonic();
@@ -32,7 +32,10 @@ export default class AttestorService {
 
   public static async getAttestor(): Promise<Attestor> {
     if (!this.attestor) {
-      this.attestor = await Attestor.new(getEnv('STORAGE_API_ENDPOINT'), getOrGenerateSecretFromConfig());
+      this.attestor = await Attestor.new(
+        ConfigService.getSettings()['storage-api-endpoint'],
+        getOrGenerateSecretFromConfig()
+      );
       console.log('Attestor created');
     }
     return this.attestor;
