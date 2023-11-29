@@ -60,7 +60,7 @@ export default async (
     case 'OKX_TESTNET':
       return {
         provider: new WebSocketProvider('wss://x1testws.okx.com'),
-        deploymentInfo: await fetchDeploymentInfo('X1test', config.version),
+        deploymentInfo: await fetchDeploymentInfo('x1test', config.version),
       };
 
     default:
