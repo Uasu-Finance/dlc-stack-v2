@@ -98,7 +98,7 @@ where
     O::Target: AsyncOracle,
     T::Target: Time,
 {
-    oracles: Option<HashMap<XOnlyPublicKey, O>>,
+    pub oracles: Option<HashMap<XOnlyPublicKey, O>>,
     wallet: W,
     blockchain: B,
     store: S,

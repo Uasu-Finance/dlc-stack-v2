@@ -7,6 +7,7 @@
 use bitcoin::util::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use bytes::Buf;
 
+use futures_util::future::join_all;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{header, Body, Method, Response, Server, StatusCode};
 
@@ -113,6 +114,42 @@ async fn get_attestors(
     }
 }
 
+async fn get_chain_from_attestors(
+    attestors: HashMap<XOnlyPublicKey, Arc<AttestorClient>>,
+    uuid: String,
+) -> Result<String, GenericError> {
+    let attestors_with_uuid: Vec<((&XOnlyPublicKey, &Arc<AttestorClient>), String)> =
+        attestors.iter().map(|x| (x, uuid.clone())).collect();
+    let chains = join_all(
+        attestors_with_uuid
+            .iter()
+            .map(|((_k, v), uuid)| async move {
+                match v.get_chain(&uuid.clone()).await {
+                    Ok(chain) => Some(chain),
+                    Err(e) => {
+                        error!("Error getting chain from attestor: {}", e);
+                        None
+                    }
+                }
+            }),
+    )
+    .await;
+
+    // check that all values in chains are the same
+    if chains.is_empty() || !chains.iter().all(|x| x.as_ref() == chains[0].as_ref()) {
+        error!("Chains from attestors are not all the same.");
+        return Err("Chains from attestors are not all the same.".into());
+    }
+    match &chains[0] {
+        Some(chain) => {
+            let json_chain = serde_json::to_string(chain)
+                .map_err(|e| format!("Failed to serialize chain to JSON: {}", e))?;
+            Ok(json_chain)
+        }
+        None => Err("Failed to get chain from attestors".into()),
+    }
+}
+
 async fn generate_attestor_client(
     attestor_urls: Vec<String>,
 ) -> HashMap<XOnlyPublicKey, Arc<AttestorClient>> {
@@ -173,13 +210,33 @@ async fn process_request(
     wallet: Arc<DlcWallet>,
     active_network: String,
     blockchain_interface_url: String,
-    attestor_urls: Vec<String>,
 ) -> Result<Response<Body>, GenericError> {
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/health") => build_success_response(
             json!({"data": [{"status": "healthy", "message": ""}]}).to_string(),
         ),
         (&Method::GET, "/info") => get_wallet_info(dlc_store, wallet).await,
+        (&Method::GET, path) if path.starts_with("/get_chain/") => {
+            info!("Getting chain for event id {}", path);
+            let event_id = path.trim_start_matches("/get_chain/").to_string();
+            let attestors: HashMap<XOnlyPublicKey, Arc<AttestorClient>> =
+                match manager.oracles.clone() {
+                    Some(oracles) => oracles,
+                    None => {
+                        error!("No attestors from manager");
+                        return build_error_response("No attestors from manager".to_string());
+                    }
+                };
+
+            let chain = match get_chain_from_attestors(attestors, event_id).await {
+                Ok(chain) => chain,
+                Err(e) => {
+                    error!("Error getting chain from attestors: {}", e);
+                    return build_error_response(e.to_string());
+                }
+            };
+            build_success_response(chain)
+        }
         (&Method::GET, "/periodic_check") => {
             let result =
                 async { periodic_check(manager, dlc_store, blockchain_interface_url).await };
@@ -203,6 +260,14 @@ async fn process_request(
                 total_outcomes: u64,
                 refund_delay: u32,
             }
+            let attestors: HashMap<XOnlyPublicKey, Arc<AttestorClient>> =
+                match manager.oracles.clone() {
+                    Some(oracles) => oracles,
+                    None => {
+                        error!("No attestors from manager");
+                        return build_error_response("No attestors from manager".to_string());
+                    }
+                };
             let result = async {
                 let whole_body = hyper::body::aggregate(req)
                     .await
@@ -216,12 +281,9 @@ async fn process_request(
                         ))
                     })?;
 
-                let bitcoin_contract_attestors: HashMap<XOnlyPublicKey, Arc<AttestorClient>> =
-                    generate_attestor_client(attestor_urls.clone()).await;
-
                 create_new_offer(
                     manager,
-                    bitcoin_contract_attestors,
+                    attestors,
                     active_network,
                     req.uuid,
                     req.accept_collateral,
@@ -403,7 +465,6 @@ async fn main() -> Result<(), GenericError> {
         let wallet = wallet.clone();
         let blockchain_interface_url = blockchain_interface_url.clone();
         let active_network = active_network.to_string();
-        let attestor_urls = attestor_urls.clone();
 
         async move {
             Ok::<_, GenericError>(service_fn(move |req| {
@@ -414,7 +475,6 @@ async fn main() -> Result<(), GenericError> {
                     wallet.to_owned(),
                     active_network.to_owned(),
                     blockchain_interface_url.to_owned(),
-                    attestor_urls.to_owned(),
                 )
             }))
         }
@@ -651,6 +711,13 @@ async fn periodic_check(
     let funded_url = format!("{}/set-status-funded", blockchain_interface_url);
     let closed_url = format!("{}/post-close-dlc", blockchain_interface_url);
 
+    let attestors: HashMap<XOnlyPublicKey, Arc<AttestorClient>> = match manager.oracles.clone() {
+        Some(oracles) => oracles,
+        None => {
+            return Err("No attestors from manager".into());
+        }
+    };
+
     let updated_contracts = match manager.periodic_check().await {
         Ok(updated_contracts) => updated_contracts,
         Err(e) => {
@@ -702,22 +769,40 @@ async fn periodic_check(
             "Contract is funded, setting funded to true: {}, btc tx id: {}",
             uuid, txid
         );
-        reqwest::Client::new()
-            .post(&funded_url)
-            .timeout(REQWEST_TIMEOUT)
-            .json(&json!({"uuid": uuid, "btcTxId": txid.to_string()}))
-            .send()
-            .await?;
+
+        match get_chain_from_attestors(attestors.clone(), uuid.clone()).await {
+            Ok(chain) => {
+                reqwest::Client::new()
+                    .post(&funded_url)
+                    .timeout(REQWEST_TIMEOUT)
+                    .json(&json!({"uuid": uuid, "btcTxId": txid.to_string(), "chain": chain}))
+                    .send()
+                    .await?
+            }
+            Err(e) => {
+                error!("Failed to get chain from attestors: {}", e);
+                return Err(e);
+            }
+        };
     }
 
     for (uuid, txid) in newly_closed_uuids {
         debug!("Contract is closed, firing post-close url: {}", uuid);
-        reqwest::Client::new()
-            .post(&closed_url)
-            .timeout(REQWEST_TIMEOUT)
-            .json(&json!({"uuid": uuid, "btcTxId": txid.to_string()}))
-            .send()
-            .await?;
+
+        match get_chain_from_attestors(attestors.clone(), uuid.clone()).await {
+            Ok(chain) => {
+                reqwest::Client::new()
+                    .post(&closed_url)
+                    .timeout(REQWEST_TIMEOUT)
+                    .json(&json!({"uuid": uuid, "btcTxId": txid.to_string(), "chain": chain}))
+                    .send()
+                    .await?
+            }
+            Err(e) => {
+                error!("Failed to get chain from attestors: {}", e);
+                return Err(e);
+            }
+        };
     }
     Ok("Success running periodic check".to_string())
 }

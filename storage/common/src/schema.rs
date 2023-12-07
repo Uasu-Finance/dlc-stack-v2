@@ -1,6 +1,6 @@
-use diesel::prelude::*;
+// @generated automatically by Diesel CLI.
 
-table! {
+diesel::table! {
     contracts (id) {
         id -> Int4,
         uuid -> Varchar,
@@ -10,11 +10,12 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     events (id) {
         id -> Int4,
         event_id -> Varchar,
         content -> Text,
         key -> Varchar,
+        chain -> Varchar,
     }
 }
