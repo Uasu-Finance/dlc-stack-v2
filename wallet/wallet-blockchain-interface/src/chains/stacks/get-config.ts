@@ -18,6 +18,7 @@ import { hexToBytes, uuidToCV } from './helper-functions.js';
 import { StacksNetwork } from '@stacks/network';
 import getNetworkInfo from './get-network-config.js';
 import StacksNonceService from '../../services/stacks-nonce.service.js';
+import { BigNumber } from 'ethers';
 
 async function getCallbackContract(uuid: string, contractName: string, deployer: string, network: StacksNetwork) {
     const functionName = 'get-callback-contract';
@@ -45,7 +46,6 @@ export default async (config: ChainConfig): Promise<WrappedContract> => {
     return {
         setStatusFunded: async (uuid, btcTxId) => {
             try {
-                console.warn('btcTxId has been supplied, but it is not yet supported on Stacks Blockchain');
                 const cbPrincipal = await getCallbackContract(uuid, contractName, deployer, stacksNetwork);
 
                 const txOptions2: SignedContractCallOptions = {
@@ -54,6 +54,7 @@ export default async (config: ChainConfig): Promise<WrappedContract> => {
                     functionName: 'set-status-funded',
                     functionArgs: [
                         uuidToCV(uuid),
+                        stringAsciiCV(btcTxId),
                         contractPrincipalCV(addressToString(cbPrincipal.address), cbPrincipal.contractName.content),
                     ],
                     senderKey: walletKey,
@@ -121,6 +122,20 @@ export default async (config: ChainConfig): Promise<WrappedContract> => {
         getDLCInfo: async (uuid) => {
             try {
                 console.log('Getting DLC info...');
+                const functionName = 'get-dlc';
+                const txOptions = {
+                    contractAddress: deployer,
+                    contractName: contractName,
+                    functionName: functionName,
+                    functionArgs: [uuidToCV(uuid)],
+                    senderAddress: deployer,
+                    network: stacksNetwork,
+                };
+                const transaction: any = await callReadOnlyFunction(txOptions);
+                const dlcInfo = cvToValue(transaction.value);
+                dlcInfo.refundDelay = BigNumber.from(parseInt(dlcInfo['refund-delay'].value));
+                dlcInfo.valueLocked = BigNumber.from(parseInt(dlcInfo['value-locked'].value));
+                return dlcInfo;
             } catch (error) {
                 console.log(error);
                 return error;
