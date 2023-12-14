@@ -7,8 +7,10 @@
 extern crate console_error_panic_hook;
 extern crate log;
 
+use bitcoin::XOnlyPublicKey;
 use bitcoin::{Network, PrivateKey};
 use dlc_messages::{Message, OfferDlc, SignDlc};
+use log::{error, info, warn};
 use secp256k1_zkp::UpstreamError;
 use wasm_bindgen::prelude::*;
 
@@ -18,12 +20,13 @@ use secp256k1_zkp::hashes::*;
 use secp256k1_zkp::Secp256k1;
 
 use core::panic;
+use std::collections::HashMap;
 use std::fmt;
 use std::{io::Cursor, str::FromStr, sync::Arc};
 
 use dlc_manager::{contract::Contract, ContractId, SystemTimeProvider};
 
-use dlc_link_manager::{AsyncStorage, Manager};
+use dlc_link_manager::{AsyncOracle, AsyncStorage, Manager};
 
 use std::fmt::Write as _;
 
@@ -115,6 +118,29 @@ where
     WalletError(e.to_string())
 }
 
+pub async fn generate_attestor_client(
+    attestor_urls: Vec<String>,
+) -> HashMap<XOnlyPublicKey, Arc<AttestorClient>> {
+    let mut attestor_clients = HashMap::new();
+
+    for url in attestor_urls.iter() {
+        let p2p_client = match retry!(
+            AttestorClient::new(url).await,
+            10,
+            "attestor client creation",
+            6
+        ) {
+            Ok(client) => client,
+            Err(e) => {
+                panic!("Error creating attestor client: {}", e);
+            }
+        };
+        let attestor = Arc::new(p2p_client);
+        attestor_clients.insert(attestor.get_public_key().await, attestor.clone());
+    }
+    attestor_clients
+}
+
 #[wasm_bindgen]
 impl JsDLCInterface {
     pub async fn new(
@@ -159,6 +185,28 @@ impl JsDLCInterface {
             PrivateKey::new(seckey, active_network),
         ));
 
+        // Set up Attestor Clients
+        let devnet_attestor_urls: Vec<String> = vec![
+            "https://devnet.dlc.link/attestor-1".to_string(),
+            "https://devnet.dlc.link/attestor-2".to_string(),
+            "https://devnet.dlc.link/attestor-3".to_string(),
+        ];
+
+        let testnet_attestor_urls: Vec<String> = vec![
+            "https://testnet.dlc.link/attestor-1".to_string(),
+            "https://testnet.dlc.link/attestor-2".to_string(),
+            "https://testnet.dlc.link/attestor-3".to_string(),
+        ];
+
+        let attestor_urls = match active_network {
+            Network::Regtest => devnet_attestor_urls,
+            Network::Testnet => testnet_attestor_urls,
+            _ => vec![],
+        };
+
+        let protocol_wallet_attestors: HashMap<XOnlyPublicKey, Arc<AttestorClient>> =
+            generate_attestor_client(attestor_urls.clone()).await;
+
         // Set up time provider
         let time_provider = SystemTimeProvider {};
 
@@ -167,7 +215,7 @@ impl JsDLCInterface {
             Arc::clone(&wallet),
             Arc::clone(&blockchain),
             Box::new(dlc_store),
-            None,
+            Some(protocol_wallet_attestors),
             Arc::new(time_provider),
         )?;
 
@@ -206,8 +254,6 @@ impl JsDLCInterface {
 
     // public async function for fetching all the contracts on the manager
     pub async fn get_contracts(&self) -> Result<JsValue, JsError> {
-        log_to_console!("get_contracts");
-        // let mut errors: Vec<WalletError> = vec![];
         let contracts: Vec<JsContract> = self
             .manager
             .get_store()
@@ -238,6 +284,11 @@ impl JsDLCInterface {
             )?)?),
             None => Ok(JsValue::NULL),
         }
+    }
+
+    pub async fn periodic_check(&self) -> Result<(), JsError> {
+        self.manager.periodic_check().await?;
+        Ok(())
     }
 
     pub async fn accept_offer(&self, offer_json: String) -> Result<String, JsError> {
