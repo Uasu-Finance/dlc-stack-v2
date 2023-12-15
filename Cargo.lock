@@ -808,7 +808,7 @@ dependencies = [
 [[package]]
 name = "dlc"
 version = "0.4.0"
-source = "git+https://github.com/dlc-link/rust-dlc?rev=bd71461#bd71461b137eb402a13d4f3affd555d0b79ae233"
+source = "git+https://github.com/dlc-link/rust-dlc?rev=c55e128#c55e128dfe14ea714d62564a793467d19a5fac4a"
 dependencies = [
  "bitcoin 0.29.2",
  "miniscript 9.0.2",
@@ -845,7 +845,6 @@ dependencies = [
  "dlc",
  "dlc-manager",
  "dlc-messages",
- "dlc-trie",
  "futures",
  "lightning",
  "log",
@@ -860,7 +859,7 @@ dependencies = [
 [[package]]
 name = "dlc-manager"
 version = "0.4.0"
-source = "git+https://github.com/dlc-link/rust-dlc?rev=bd71461#bd71461b137eb402a13d4f3affd555d0b79ae233"
+source = "git+https://github.com/dlc-link/rust-dlc?rev=c55e128#c55e128dfe14ea714d62564a793467d19a5fac4a"
 dependencies = [
  "async-trait",
  "bitcoin 0.29.2",
@@ -876,7 +875,7 @@ dependencies = [
 [[package]]
 name = "dlc-messages"
 version = "0.4.0"
-source = "git+https://github.com/dlc-link/rust-dlc?rev=bd71461#bd71461b137eb402a13d4f3affd555d0b79ae233"
+source = "git+https://github.com/dlc-link/rust-dlc?rev=c55e128#c55e128dfe14ea714d62564a793467d19a5fac4a"
 dependencies = [
  "bitcoin 0.29.2",
  "dlc",
@@ -985,7 +984,6 @@ dependencies = [
  "dlc-link-manager",
  "dlc-manager",
  "dlc-messages",
- "dlc-trie",
  "esplora-async-blockchain-provider-js-wallet",
  "getrandom",
  "js-interface-wallet",
@@ -1004,7 +1002,7 @@ dependencies = [
 [[package]]
 name = "dlc-trie"
 version = "0.4.0"
-source = "git+https://github.com/dlc-link/rust-dlc?rev=bd71461#bd71461b137eb402a13d4f3affd555d0b79ae233"
+source = "git+https://github.com/dlc-link/rust-dlc?rev=c55e128#c55e128dfe14ea714d62564a793467d19a5fac4a"
 dependencies = [
  "bitcoin 0.29.2",
  "dlc",
@@ -1638,9 +1636,9 @@ checksum = "a08173bc88b7955d1b3145aa561539096c421ac8debde8cbc3612ec635fee29b"
 
 [[package]]
 name = "lightning"
-version = "0.0.113"
+version = "0.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "087add70f81d2fdc6d4409bc0cef69e11ad366ef1d0068550159bd22b3ac8664"
+checksum = "90a0f2155316f1570446a0447c993480673f840748c8ed25bbc59dfc442ac770"
 dependencies = [
  "bitcoin 0.29.2",
 ]
