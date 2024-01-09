@@ -3,6 +3,8 @@ import { generateMnemonic, mnemonicToSeedSync } from 'bip39';
 import { BIP32Factory } from 'bip32';
 import * as ecc from 'tiny-secp256k1';
 import ConfigService from './config.service.js';
+import { PrefixedChain } from '../config/models.js';
+import { createAttestorMetricsCounters } from '../config/prom-metrics.models.js';
 
 function getOrGenerateSecretFromConfig(): string {
   let secretKey: string;
@@ -25,6 +27,7 @@ function createMaturationDate() {
   return maturationDate.toISOString();
 }
 
+const attestorMetricsCounter = createAttestorMetricsCounters();
 export default class AttestorService {
   private static attestor: Attestor;
 
@@ -52,14 +55,16 @@ export default class AttestorService {
       health.get('data').forEach((element: Iterable<readonly [PropertyKey, any]>) => {
         health_response.push(Object.fromEntries(element));
       });
+      attestorMetricsCounter.getHealthSuccessCounter.inc();
       return JSON.stringify({ data: health_response });
     } catch (error) {
       console.error(error);
+      attestorMetricsCounter.getHealthErrorCounter.inc();
       return error;
     }
   }
 
-  public static async createAnnouncement(uuid: string, chain: string, maturation?: string) {
+  public static async createAnnouncement(uuid: string, chain: PrefixedChain, maturation?: string) {
     const attestor = await this.getAttestor();
 
     console.log('createAnnouncement with UUID:', uuid, 'and maturation:', maturation);
@@ -68,8 +73,10 @@ export default class AttestorService {
 
     try {
       await attestor.create_event(uuid, _maturation, chain);
+      attestorMetricsCounter.createAnnouncementSuccessCounter.inc();
     } catch (error) {
       console.error(error);
+      attestorMetricsCounter.createAnnouncementErrorCounter.inc();
       return error;
     }
     return { uuid: uuid, maturation: _maturation };
@@ -82,7 +89,15 @@ export default class AttestorService {
     // We can safely assume that the value is not bigger than 2^53 - 1
     const formattedOutcome = formatOutcome(Number(value));
 
-    await attestor.attest(uuid, formattedOutcome);
+    try {
+      await attestor.attest(uuid, formattedOutcome);
+      attestorMetricsCounter.createAttestationSuccessCounter.inc();
+    } catch (error) {
+      console.error(error);
+      attestorMetricsCounter.createAttestationErrorCounter.inc();
+      return error;
+    }
+
     return { uuid: uuid, outcome: Number(formattedOutcome) };
   }
 
@@ -90,9 +105,11 @@ export default class AttestorService {
     const attestor = await this.getAttestor();
     try {
       const event = await attestor.get_event(uuid);
+      attestorMetricsCounter.getEventSuccessCounter.inc();
       return event;
     } catch (error) {
       console.error(error);
+      attestorMetricsCounter.getEventErrorCounter.inc();
       return null;
     }
   }
@@ -101,9 +118,11 @@ export default class AttestorService {
     const attestor = await this.getAttestor();
     try {
       const events = await attestor.get_events();
+      attestorMetricsCounter.getAllEventsSuccessCounter.inc();
       return events;
     } catch (error) {
       console.error(error);
+      attestorMetricsCounter.getAllEventsErrorCounter.inc();
       return null;
     }
   }
@@ -112,9 +131,11 @@ export default class AttestorService {
     const attestor = await this.getAttestor();
     try {
       const publicKey = await attestor.get_pubkey();
+      attestorMetricsCounter.getPublicKeySuccessCounter.inc();
       return publicKey;
     } catch (error) {
       console.error(error);
+      attestorMetricsCounter.getPublicKeyErrorCounter.inc();
       return null;
     }
   }
