@@ -105,7 +105,7 @@ impl Default for JsDLCInterfaceOptions {
     fn default() -> Self {
         Self {
             network: "regtest".to_string(),
-            electrs_url: "https://devnet.dlc.link/electrs".to_string(),
+            electrs_url: "http://45.79.130.153:3002".to_string(),
             address: "".to_string(),
         }
     }
@@ -187,9 +187,9 @@ impl JsDLCInterface {
 
         // Set up Attestor Clients
         let devnet_attestor_urls: Vec<String> = vec![
-            "https://devnet.dlc.link/attestor-1".to_string(),
-            "https://devnet.dlc.link/attestor-2".to_string(),
-            "https://devnet.dlc.link/attestor-3".to_string(),
+            "http://45.79.130.153:8801".to_string(),
+            "http://45.79.130.153:8802".to_string(),
+            "http://45.79.130.153:8803".to_string(),
         ];
 
         let testnet_attestor_urls: Vec<String> = vec![

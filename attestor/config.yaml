@@ -58,7 +58,7 @@ stx-chains:
   # - network: mocknet
   #   version: 1
   #   deployer: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-  #   endpoint: ws://stx-btc1.dlc.link:3999
+  #   endpoint: ws://45.79.130.153:3999
 
   - network: local
     version: 1

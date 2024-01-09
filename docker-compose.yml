@@ -6,7 +6,7 @@ services:
     hostname: postgresdlc
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: changeme
+      POSTGRES_PASSWORD: theraininspainstaysmainlyintheplain
       PGDATA: /data/postgres
     ports:
       - '5431:5432'
@@ -27,7 +27,7 @@ services:
       dockerfile: ./storage/Dockerfile
     environment:
       RUST_LOG: 'info'
-      DATABASE_URL: 'postgresql://postgres:changeme@postgresdlc:5432/postgres'
+      DATABASE_URL: 'postgresql://postgres:theraininspainstaysmainlyintheplain@postgresdlc:5432/postgres'
       MIGRATE: 'true'
     ports:
       - '8100:8100'
@@ -117,7 +117,7 @@ services:
       - 'ATTESTOR_CONFIG=docker'
       - 'TEST_MODE_ENABLED=true'
       # For Internal DLC.Link Bitcoin Mocknet
-      - 'ELECTRUM_API_URL=https://devnet.dlc.link/electrs'
+      - 'ELECTRUM_API_URL=http://45.79.130.153:3002'
       # For Bitcoin Testnet
       # - "ELECTRUM_API_URL=https://blockstream.info/testnet/api"
       # For Bitcoin Mainnet
@@ -162,7 +162,7 @@ services:
       - ENV=docker
       - 'HANDLE_ATTESTORS=${HANDLE_ATTESTORS:-true}'
       - 'SUCCESSFUL_ATTESTING=${SUCCESSFUL_ATTESTING:-true}'
-      - ELECTRUM_API_URL=https://devnet.dlc.link/electrs
+      - ELECTRUM_API_URL=http://45.79.130.153:3002
     volumes:
       - ./it:/app/it
     depends_on:
