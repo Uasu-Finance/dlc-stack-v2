@@ -21,13 +21,13 @@ router.post('/set-status-funded', express.json(), localhostOrDockerOnly, async (
         res.status(400).send('Missing chain');
         return;
     }
-    console.log(
-        `[WBI] POST /set-status-funded with UUID: ${req.body.uuid} and BTC TX ID: ${req.body.btcTxId} and chain: ${req.body.chain}`
-    );
     if (TESTMODE) {
         res.status(200).send('set-status-funded called in test mode.');
         return;
     }
+    console.log(
+        `[WBI] POST /set-status-funded with UUID: ${req.body.uuid} and BTC TX ID: ${req.body.btcTxId} and chain: ${req.body.chain} and test mode: ${TESTMODE}`
+    );
 
     const data = await blockchainWriter.setStatusFunded(
         req.body.uuid as string,

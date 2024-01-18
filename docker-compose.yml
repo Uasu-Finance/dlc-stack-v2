@@ -115,7 +115,7 @@ services:
     environment:
       - 'STX_MOCKNET_PRIVATE_KEY=6a1a754ba863d7bab14adbbc3f8ebb090af9e871ace621d3e5ab634e1422885e01'
       - 'ATTESTOR_CONFIG=docker'
-      - 'TEST_MODE_ENABLED=true'
+      - 'TEST_MODE_ENABLED=false'
       # For Internal DLC.Link Bitcoin Mocknet
       - 'ELECTRUM_API_URL=https://devnet-electrs.uasu.finance'
       # For Bitcoin Testnet
