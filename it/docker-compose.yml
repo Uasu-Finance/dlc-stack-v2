@@ -18,7 +18,7 @@ services:
       retries: 5
     networks:
       static-network:
-        ipv4_address: 172.20.128.8
+        ipv4_address: 172.23.128.8
 
   storageapi:
     container_name: storageapi
@@ -36,7 +36,7 @@ services:
         condition: service_healthy
     networks:
       static-network:
-        ipv4_address: 172.20.128.1
+        ipv4_address: 172.23.128.1
 
   dlc-link-attestor-1:
     container_name: attestor-1
@@ -54,7 +54,7 @@ services:
       - storageapi
     networks:
       static-network:
-        ipv4_address: 172.20.128.5
+        ipv4_address: 172.23.128.5
 
   dlc-link-attestor-2:
     container_name: attestor-2
@@ -72,7 +72,7 @@ services:
       - storageapi
     networks:
       static-network:
-        ipv4_address: 172.20.128.6
+        ipv4_address: 172.23.128.6
 
   dlc-link-attestor-3:
     container_name: attestor-3
@@ -90,7 +90,7 @@ services:
       - storageapi
     networks:
       static-network:
-        ipv4_address: 172.20.128.7
+        ipv4_address: 172.23.128.7
 
   router-wallet:
     container_name: router-wallet
@@ -119,7 +119,7 @@ services:
       - 'BLOCKCHAIN_INTERFACE_URL=http://router-wallet:3001'
       - 'XPRIV=${XPRIV}'
       - 'FINGERPRINT=${FINGERPRINT}'
-      - 'WALLET_IP=172.20.128.2'
+      - 'WALLET_IP=172.23.128.2'
     depends_on:
       - postgresdlc
       - storageapi
@@ -128,7 +128,7 @@ services:
       - dlc-link-attestor-3
     networks:
       static-network:
-        ipv4_address: 172.20.128.2
+        ipv4_address: 172.23.128.2
     healthcheck:
       test: curl --fail http://router-wallet:8085/info || exit 1
       interval: 3s
@@ -152,9 +152,9 @@ services:
         condition: service_healthy
     networks:
       static-network:
-        ipv4_address: 172.20.128.9
+        ipv4_address: 172.23.128.9
 networks:
   static-network:
     ipam:
       config:
-        - subnet: 172.20.0.0/16
+        - subnet: 172.23.0.0/16

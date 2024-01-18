@@ -2,9 +2,9 @@ const attestorLists: Array<{ name: string; domains: string[] }> = [
     {
         name: 'docker',
         domains: [
-            'http://172.20.128.5:8801', // Docker hardcoded attestors
-            'http://172.20.128.6:8802',
-            'http://172.20.128.7:8803',
+            'http://172.23.128.5:8801', // Docker hardcoded attestors
+            'http://172.23.128.6:8802',
+            'http://172.23.128.7:8803',
         ],
     },
     {

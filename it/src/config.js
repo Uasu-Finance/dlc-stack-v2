@@ -115,9 +115,9 @@ const docker = {
   testWalletAddress: someFundedRegtestWallets[randomIndex].address,
   bitcoinNetwork: 'regtest',
   bitcoinNetworkURL: 'https://devnet-electrs.uasu.finance',
-  protocolWalletURL: 'http://172.20.128.2:3003',
-  attestorList: ['http://172.20.128.5:8801', 'http://172.20.128.6:8802', 'http://172.20.128.7:8803'],
-  storageApiUrl: 'http://172.20.128.1:8100',
+  protocolWalletURL: 'http://172.23.128.2:3003',
+  attestorList: ['http://172.23.128.5:8801', 'http://172.23.128.6:8802', 'http://172.23.128.7:8803'],
+  storageApiUrl: 'http://172.23.128.1:8100',
 };
 
 const custom = {
