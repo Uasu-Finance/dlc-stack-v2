@@ -18,9 +18,9 @@ const attestorLists: Array<{ name: string; domains: string[] }> = [
     {
         name: 'devnet',
         domains: [
-            'http://45.79.130.153:8801',
-            'http://45.79.130.153:8802',
-            'http://45.79.130.153:8803',
+            'https://dlink-attestor1.uasu.finance',
+            'https://dlink-attestor2.uasu.finance',
+            'https://dlink-attestor3.uasu.finance',
         ],
     },
     {

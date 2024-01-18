@@ -20,9 +20,9 @@ services:
       - "ATTESTOR_CONFIG=${ATTESTOR_CONFIG:-devnet}"
       - "TEST_MODE_ENABLED=${TEST_MODE_ENABLED:-false}"
       # For DLC.Link Bitcoin Mocknet
-      - "ELECTRUM_API_URL=http://45.79.130.153:3002"
+      - "ELECTRUM_API_URL=https://devnet-electrs.uasu.finance"
       - "BITCOIN_NETWORK=regtest"
-      - "STORAGE_API_ENDPOINT=http://45.79.130.153:8100"
+      - "STORAGE_API_ENDPOINT=https://dlink-storage.uasu.finance"
       # For Bitcoin Testnet
       # - "ELECTRUM_API_URL=https://blockstream.info/testnet/api"
       # - "BITCOIN_NETWORK=testnet"

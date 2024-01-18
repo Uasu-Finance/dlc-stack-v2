@@ -54,7 +54,7 @@ const devnet = {
   testWalletPrivateKey: 'b5984262748203b2043923dd34202d1a6e05601af0c00e232d3b1988ce9608f5',
   testWalletAddress: 'bcrt1qpnuck30uakpc0ffcmd3nwdd59y547qlzsmf34l',
   bitcoinNetwork: 'regtest',
-  bitcoinNetworkURL: 'http://45.79.130.153:3002',
+  bitcoinNetworkURL: 'https://devnet-electrs.uasu.finance',
   // TODO: which wallet?
   //protocolWalletURL: 'https://devnet.dlc.link/eth-wallet',
   //attestorList: [
@@ -63,13 +63,13 @@ const devnet = {
   //  'https://devnet.dlc.link/attestor-3',
   //],
   //storageApiUrl: 'https://devnet.dlc.link/storage-api',
-  protocolWalletURL: 'http://45.79.130.153:8085',
+  protocolWalletURL: 'https://dlink-protocol.uasu.finance',
   attestorList: [
-    'http://45.79.130.153:8801',
-    'http://45.79.130.153:8802',
-    'http://45.79.130.153:8802',
+    'https://dlink-attestor1.uasu.finance',
+    'https://dlink-attestor2.uasu.finance',
+    'https://dlink-attestor3.uasu.finance',
   ],
-  storageApiUrl: 'http://45.79.130.153:8100',
+  storageApiUrl: 'https://dlink-storage.uasu.finance',
 };
 
 const testnet = {
@@ -93,7 +93,7 @@ const local = {
   testWalletPrivateKey: process.env.TEST_WALLET_PKEY,
   testWalletAddress: process.env.TEST_WALLET_ADDRESS,
   bitcoinNetwork: 'regtest',
-  bitcoinNetworkURL: 'http://45.79.130.153:3002',
+  bitcoinNetworkURL: 'https://devnet-electrs.uasu.finance',
   protocolWalletURL: 'http://127.0.0.1:3003',
   attestorList: ['http://localhost:8801', 'http://localhost:8802', 'http://localhost:8803'],
   storageApiUrl: 'http://127.0.0.1:8100',
@@ -104,7 +104,7 @@ const local_just = {
   testWalletPrivateKey: process.env.TEST_WALLET_PKEY,
   testWalletAddress: process.env.TEST_WALLET_ADDRESS,
   bitcoinNetwork: 'regtest',
-  bitcoinNetworkURL: 'http://45.79.130.153:3002',
+  bitcoinNetworkURL: 'https://devnet-electrs.uasu.finance',
   protocolWalletURL: 'http://127.0.0.1:3003',
   attestorList: ['http://127.0.0.1:8801', 'http://127.0.0.1:8802', 'http://127.0.0.1:8803'],
   storageApiUrl: 'http://127.0.0.1:8100',
@@ -114,7 +114,7 @@ const docker = {
   testWalletPrivateKey: someFundedRegtestWallets[randomIndex].privateKey,
   testWalletAddress: someFundedRegtestWallets[randomIndex].address,
   bitcoinNetwork: 'regtest',
-  bitcoinNetworkURL: 'http://45.79.130.153:3002',
+  bitcoinNetworkURL: 'https://devnet-electrs.uasu.finance',
   protocolWalletURL: 'http://172.20.128.2:3003',
   attestorList: ['http://172.20.128.5:8801', 'http://172.20.128.6:8802', 'http://172.20.128.7:8803'],
   storageApiUrl: 'http://172.20.128.1:8100',

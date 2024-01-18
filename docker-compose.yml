@@ -117,7 +117,7 @@ services:
       - 'ATTESTOR_CONFIG=docker'
       - 'TEST_MODE_ENABLED=true'
       # For Internal DLC.Link Bitcoin Mocknet
-      - 'ELECTRUM_API_URL=http://45.79.130.153:3002'
+      - 'ELECTRUM_API_URL=https://devnet-electrs.uasu.finance'
       # For Bitcoin Testnet
       # - "ELECTRUM_API_URL=https://blockstream.info/testnet/api"
       # For Bitcoin Mainnet
@@ -162,7 +162,7 @@ services:
       - ENV=docker
       - 'HANDLE_ATTESTORS=${HANDLE_ATTESTORS:-true}'
       - 'SUCCESSFUL_ATTESTING=${SUCCESSFUL_ATTESTING:-true}'
-      - ELECTRUM_API_URL=http://45.79.130.153:3002
+      - ELECTRUM_API_URL=https://devnet-electrs.uasu.finance
     volumes:
       - ./it:/app/it
     depends_on:
