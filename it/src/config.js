@@ -56,13 +56,13 @@ const devnet = {
   bitcoinNetwork: 'regtest',
   bitcoinNetworkURL: 'https://devnet-electrs.uasu.finance',
   // TODO: which wallet?
-  //protocolWalletURL: 'https://devnet.dlc.link/eth-wallet',
+  //protocolWalletURL: 'https://dlink-wallet.uasu.finance',
   //attestorList: [
-  //  'https://devnet.dlc.link/attestor-1',
-  //  'https://devnet.dlc.link/attestor-2',
-  //  'https://devnet.dlc.link/attestor-3',
+  //  'https://dlink-attestor1.uasu.finance',
+  //  'https://dlink-attestor2.uasu.finance',
+  //  'https://dlink-attestor3.uasu.finance',
   //],
-  //storageApiUrl: 'https://devnet.dlc.link/storage-api',
+  //storageApiUrl: 'https://dlink-storage.uasu.finance',
   protocolWalletURL: 'https://dlink-protocol.uasu.finance',
   attestorList: [
     'https://dlink-attestor1.uasu.finance',
